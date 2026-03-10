@@ -25,6 +25,7 @@
 
 #pragma GCC optimize("Ofast")
 #include "luna_car.h"
+// #include "tests.h"   // uncomment for bench testing; remove for competition
 
 #define LOOP_MS  40   // control loop period in milliseconds
 

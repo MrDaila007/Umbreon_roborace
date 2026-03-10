@@ -14,7 +14,7 @@ static const uint32_t LIDAR_BAUD       = 115200;
 
 #define SERVO_PIN   10   // Steering servo (PWM)
 #define MOTOR_PIN   11   // Motor ESC (PWM)
-#define TAHO_PIN    13   // Hall-effect tachometer (interrupt, RISING)
+#define TAHO_PIN    13   // Optical encoder on central rod (interrupt, RISING)
 
 // ─── Steering limits ──────────────────────────────────────────────────────────
 #define NEUTRAL_POINT  90
@@ -32,25 +32,35 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define MOTOR_D  110
 
 // ─── Tachometer / speed ───────────────────────────────────────────────────────
+// Optical encoder: disc with 62 holes on the central rod (measured by taho_calibrate).
+// Wheel diameter: 63 mm  →  circumference = π × 0.063 m
+// Each pulse = 1 hole = 1/62 revolution
+// speed (m/s) = (π × d) / (ENCODER_HOLES × pulse_period_s)
+
+#define ENCODER_HOLES  62
+#define WHEEL_DIAM_M   0.063f   // 63 mm
+
 volatile unsigned long _last_turnover = 0;
 volatile unsigned long _turnover_time = 0;
 
 void taho_interrupt() {
     unsigned long now   = micros();
     unsigned long delta = now - _last_turnover;
-    if (delta > 20000UL) {   // debounce: ignore pulses < 20 ms apart
-        _turnover_time  = delta;
-        _last_turnover  = now;
+    // Debounce: ignore pulses closer than 1 ms
+    // (at 3 m/s pulses arrive every ~3 ms, so 1 ms is safe)
+    if (delta > 1000UL) {
+        _turnover_time = delta;
+        _last_turnover = now;
     }
 }
 
-// Returns wheel speed in m/s (wheel radius = 27 mm)
+// Returns wheel speed in m/s
 float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _last_turnover);
     elapsed = max(elapsed, _turnover_time);
-    if (elapsed > _turnover_time * 3UL) return 0.0f;  // stopped
-    const float WHEEL_RADIUS_M = 0.027f;
-    return 2.0f * 3.14159265f / ((float)elapsed / 1e6f) * WHEEL_RADIUS_M / 10.0f;
+    if (_turnover_time == 0 || elapsed > _turnover_time * 3UL) return 0.0f;
+    return (3.14159265f * WHEEL_DIAM_M) /
+           ((float)ENCODER_HOLES * ((float)elapsed / 1e6f));
 }
 
 // ─── TF-Luna packet state ─────────────────────────────────────────────────────
@@ -171,7 +181,7 @@ void Car::pid_control_motor() {
     float spd   = get_speed();
     float error = target_speed - spd;
     int   ctrl  = (int)roundf(error * MOTOR_P + (error - last_error) * MOTOR_D);
-    write_speed(constrain(ctrl, 0, 100));
+    write_speed(constrain(ctrl, 0, 1000));
     last_error = error;
 }
 

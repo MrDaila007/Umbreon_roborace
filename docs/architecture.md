@@ -46,17 +46,20 @@ If a sensor has not yet received a valid packet, its slot returns `9999` (treate
 
 ### Tachometer & speed
 
-A hall-effect sensor on GP13 fires a RISING interrupt on each wheel revolution.
+An **optical encoder** on the central rod (GP13) fires a RISING interrupt for each of the **62 holes** in the disc.
 
 `get_speed()` computes speed in **m/s**:
 
 ```
-speed = (2π / period_s) × wheel_radius_m / 10
+speed = (π × wheel_diameter) / (ENCODER_HOLES × pulse_period_s)
+      = (π × 0.063) / (62 × elapsed_s)
 ```
 
-- Wheel radius: 27 mm
-- Debounce: pulses closer than 20 ms are ignored
-- Stopped detection: if `elapsed > 3 × last_period`, returns 0
+- Wheel diameter: 63 mm
+- Encoder holes: 62 per revolution → 62 pulses per wheel revolution (measured)
+- At 3 m/s: ~935 pulses/s, one pulse every ~1.1 ms
+- Debounce: pulses closer than **1 ms** are ignored
+- Stopped detection: if `elapsed > 3 × last_period` or no pulse ever seen, returns 0
 
 ---
 

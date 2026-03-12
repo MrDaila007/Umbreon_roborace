@@ -3,6 +3,15 @@
 #include <Servo.h>
 #include <SerialPIO.h>
 
+#if USE_IMU
+#include <Wire.h>
+#define IMU_SDA_PIN    0
+#define IMU_SCL_PIN    1
+#define MPU6050_ADDR   0x68
+#define GYRO_FS_500    0x08       // ±500°/s full-scale
+#define GYRO_SENS      65.5f     // LSB/(°/s) at ±500°/s
+#endif
+
 // ─── Pin assignments (RP2350 / Pico 2) ───────────────────────────────────────
 // LiDAR RX-only UART (TX=NOPIN):
 //   s[0] = Left       → GP2
@@ -34,12 +43,12 @@ static const uint32_t LIDAR_BAUD       = 115200;
 
 // ─── Tachometer / speed ───────────────────────────────────────────────────────
 // Optical encoder: disc with 62 holes on the central rod (measured by taho_calibrate).
-// Wheel diameter: 63 mm  →  circumference = π × 0.063 m
+// Wheel diameter: 60 mm  →  circumference = π × 0.060 m
 // Each pulse = 1 hole = 1/62 revolution
 // speed (m/s) = (π × d) / (ENCODER_HOLES × pulse_period_s)
 
 #define ENCODER_HOLES  62
-#define WHEEL_DIAM_M   0.063f   // 63 mm
+#define WHEEL_DIAM_M   0.060f   // 60 mm
 
 volatile unsigned long _taho_count = 0;
 volatile unsigned long _taho_last  = 0;
@@ -90,6 +99,13 @@ public:
     unsigned long pid_prev_cnt = 0;
     unsigned long pid_prev_ms  = 0;
 
+#if USE_IMU
+    bool          imu_ok       = false;
+    float         yaw_rate     = 0.0f;   // current gyro Z rate (°/s)
+    float         heading      = 0.0f;   // accumulated heading change (°)
+    unsigned long imu_prev_us  = 0;
+#endif
+
     const int sensor_amount = 4;
 
     void init();
@@ -107,6 +123,12 @@ public:
 
     // Feed incoming LiDAR bytes — call every loop iteration
     void poll_lidars();
+
+#if USE_IMU
+    bool imu_init();
+    void imu_update();
+    void reset_heading() { heading = 0.0f; }
+#endif
 
 private:
     SerialPIO* _serials[4];
@@ -244,3 +266,55 @@ void Car::write_steer(int s) {
     else       s = map(s,     0, 1000, NEUTRAL_POINT, MAX_POINT);
     steer_servo.write(s);
 }
+
+// ─── IMU (MPU-6050 gyro Z) ──────────────────────────────────────────────────
+#if USE_IMU
+bool Car::imu_init() {
+    Wire.setSDA(IMU_SDA_PIN);
+    Wire.setSCL(IMU_SCL_PIN);
+    Wire.begin();
+    Wire.setClock(400000);
+
+    // Wake from sleep
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(0x6B);            // PWR_MGMT_1
+    Wire.write(0x00);
+    if (Wire.endTransmission() != 0) { imu_ok = false; return false; }
+
+    // Gyro full-scale ±500°/s
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(0x1B);            // GYRO_CONFIG
+    Wire.write(GYRO_FS_500);
+    Wire.endTransmission();
+
+    // DLPF ~42 Hz bandwidth
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(0x1A);            // CONFIG
+    Wire.write(0x03);            // DLPF_CFG = 3
+    Wire.endTransmission();
+
+    imu_ok      = true;
+    imu_prev_us = micros();
+    return true;
+}
+
+void Car::imu_update() {
+    if (!imu_ok) return;
+
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(0x47);            // GYRO_ZOUT_H
+    Wire.endTransmission(false);
+    Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)2);
+    if (Wire.available() < 2) return;
+
+    int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
+    yaw_rate = raw_z / GYRO_SENS;
+
+    unsigned long now = micros();
+    float dt = (now - imu_prev_us) / 1e6f;
+    imu_prev_us = now;
+
+    if (dt > 0.0f && dt < 0.5f)
+        heading += yaw_rate * dt;
+}
+#endif

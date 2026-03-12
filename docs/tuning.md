@@ -63,6 +63,24 @@ Increase delays on longer cars or tighter dead ends.
 
 ---
 
+## Wrong-Direction Detection — IMU (`USE_IMU = 1`)
+
+| Constant | Default | What to change |
+|---|---|---|
+| `USE_IMU` | `1` | Set to `0` to disable IMU entirely (no `Wire.h` linked). |
+| `RACE_CW` | `true` | Set to `false` for counter-clockwise races. |
+| `WRONG_DIR_DEG` | `120.0` | Degrees of wrong-direction heading before recovery triggers. Lower = more sensitive (may false-trigger on tight hairpins). Higher = slower reaction. |
+
+**Decay factor** (hardcoded `0.97`): correct-direction heading decays by 3 % per tick. At 25 Hz this halves in ~0.9 s. Increase toward `1.0` if you want the detector to remember longer history; decrease if tight corners cause false triggers.
+
+**Typical behaviour:**
+- At 90°/s sustained wrong-direction yaw, triggers after ~1.3 s
+- Normal 90° right corner at speed contributes negative heading → decays quickly, never triggers
+
+> **Tip:** If the MPU-6050 is not connected, `imu_init()` returns `false` and all IMU reads become no-ops — the car runs normally without the sensor.
+
+---
+
 ## ESC / Servo Limits (`luna_car.h`)
 
 | Constant | Default | Effect |

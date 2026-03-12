@@ -24,6 +24,12 @@
  */
 
 #pragma GCC optimize("Ofast")
+
+// ─── IMU configuration ─────────────────────────────────────────────────────
+#define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
+#define RACE_CW         true    // true = clockwise, false = counter-clockwise
+#define WRONG_DIR_DEG   120.0f  // degrees in wrong direction before recovery
+
 #include "luna_car.h"
 // #include "tests.h"   // uncomment for bench testing; remove for competition
 
@@ -67,6 +73,9 @@ void go_back_long() {
 void work() {
     // Bring LiDAR data up to date before reading
     car.poll_lidars();
+#if USE_IMU
+    car.imu_update();
+#endif
     int* s = car.read_sensors();
 
     // ── Steering ──────────────────────────────────────────────────────────────
@@ -122,6 +131,9 @@ void work() {
         go_back();
         car.write_speed_ms(2.0f);
         stuck_time = 0;
+#if USE_IMU
+        car.reset_heading();
+#endif
     }
 
     // ── U-turn / dead-end detection ───────────────────────────────────────────
@@ -145,7 +157,43 @@ void work() {
             car.pid_control_motor();
         }
         turns = 0.0f;
+#if USE_IMU
+        car.reset_heading();
+#endif
     }
+
+    // ── Wrong-direction detection (IMU gyro) ────────────────────────────────
+#if USE_IMU
+    {
+        static float wd = 0.0f;
+        wd += car.yaw_rate * (LOOP_MS / 1000.0f);
+
+        // Decay correct-direction accumulation so normal laps don't build up
+        if ( RACE_CW && wd < 0.0f) wd *= 0.97f;
+        if (!RACE_CW && wd > 0.0f) wd *= 0.97f;
+        wd = constrain(wd, -200.0f, 200.0f);
+
+        bool wrong = RACE_CW ? (wd > WRONG_DIR_DEG)
+                              : (wd < -WRONG_DIR_DEG);
+        if (wrong) {
+            car.write_speed(0);
+            delay(100);
+            car.write_steer(RACE_CW ? 1000 : -1000);
+            delay(20);
+            go_back_long();
+            car.write_steer(RACE_CW ? -700 : 700);
+            car.write_speed_ms(2.0f);
+            unsigned long t0 = millis();
+            while ((millis() - t0) < 900) {
+                car.poll_lidars();
+                car.imu_update();
+                car.pid_control_motor();
+            }
+            wd = 0.0f;
+            car.reset_heading();
+        }
+    }
+#endif
 }
 
 // ─── Setup / loop ─────────────────────────────────────────────────────────────
@@ -154,6 +202,9 @@ unsigned long next_loop = 0;
 void setup() {
     Serial.begin(115200);
     car.init();
+#if USE_IMU
+    car.imu_init();
+#endif
     delay(3700);   // allow ESC to arm and LiDARs to start streaming
 }
 

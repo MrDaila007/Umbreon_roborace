@@ -55,7 +55,7 @@ speed = (π × wheel_diameter) / (ENCODER_HOLES × pulse_period_s)
       = (π × 0.063) / (62 × elapsed_s)
 ```
 
-- Wheel diameter: 63 mm
+- Wheel diameter: 60 mm
 - Encoder holes: 62 per revolution → 62 pulses per wheel revolution (measured)
 - At 3 m/s: ~935 pulses/s, one pulse every ~1.1 ms
 - Debounce: pulses closer than **1 ms** are ignored
@@ -96,6 +96,41 @@ Both the steering servo and motor ESC use the Servo library (PWM).
 
 ---
 
+### IMU — MPU-6050 gyro Z (optional)
+
+Enabled by `#define USE_IMU 1` in `Umbreon_roborace.ino` (before the `#include`).
+
+**Wiring:**
+
+| MPU-6050 pin | Pico 2 pin |
+|---|---|
+| VCC | 3.3 V |
+| GND | GND |
+| SDA | GP0 |
+| SCL | GP1 |
+
+I2C1 at 400 kHz. Only the **gyro Z-axis** is read (registers `0x47`–`0x48`).
+
+**Configuration:**
+- Full-scale range: ±500°/s (sensitivity 65.5 LSB/°/s)
+- Digital Low-Pass Filter: ~42 Hz bandwidth (DLPF_CFG = 3)
+
+**Functions:**
+
+| Function | Description |
+|---|---|
+| `imu_init()` | Wakes sensor, sets gyro range & DLPF. Returns `false` if sensor not found (I2C NACK) — all IMU calls become no-ops. |
+| `imu_update()` | Reads gyro Z, integrates into `heading` (degrees). Called every control tick (25 Hz). Rejects stale samples (dt > 0.5 s). |
+| `reset_heading()` | Zeroes `heading` accumulator. Called after every recovery manoeuvre. |
+
+**Members:**
+- `yaw_rate` — latest gyro Z reading in °/s (positive = counter-clockwise)
+- `heading` — cumulative heading change in degrees since last reset
+
+All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU entirely from the binary (no `Wire.h` overhead).
+
+---
+
 ## Umbreon_roborace.ino — Control Logic
 
 ### Main loop
@@ -105,12 +140,14 @@ loop()
 ├── poll_lidars()          // always — keep UART buffer empty
 └── every 40 ms → work()
     ├── poll_lidars()      // fresh data before decisions
+    ├── imu_update()       // (if USE_IMU)
     ├── read_sensors()
     ├── steering
     ├── speed
     ├── pid_control_motor()
     ├── stuck check
-    └── U-turn check
+    ├── U-turn check
+    └── wrong-direction check  // (if USE_IMU)
 ```
 
 ### Steering logic
@@ -152,3 +189,24 @@ When `turns < -18`:
 3. `go_back_long()` — longer reverse
 4. Steer left (-700), drive forward at 2 m/s for 900 ms
 5. Reset `turns = 0`
+
+### Wrong-direction detection (IMU)
+
+*Only active when `USE_IMU = 1`.*
+
+Uses the gyro Z yaw rate to detect when the car is travelling opposite to the race direction.
+
+An accumulator `wd` integrates `yaw_rate × dt` each tick:
+- **Clockwise race** (`RACE_CW = true`): normal driving produces negative yaw (right turns). Positive accumulation = wrong direction.
+- **Counter-clockwise** (`RACE_CW = false`): the opposite.
+
+Correct-direction accumulation decays by ×0.97 per tick, preventing false triggers during normal laps. Wrong-direction heading builds freely until it crosses `WRONG_DIR_DEG` (default 120°).
+
+When triggered:
+1. Stop
+2. Steer hard toward the correct race direction
+3. `go_back_long()` — long reverse
+4. Steer opposite, drive forward at 2 m/s for 900 ms
+5. Reset accumulator and `heading`
+
+The heading accumulator is also reset after stuck and U-turn recoveries to avoid stale data influencing detection.

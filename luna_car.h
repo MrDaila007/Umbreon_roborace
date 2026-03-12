@@ -27,9 +27,10 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define MAX_SPEED      110  // fastest forward
 #define MIN_BSPEED     85   // slowest reverse
 
-// ─── Speed PID ────────────────────────────────────────────────────────────────
-#define MOTOR_P  200
-#define MOTOR_D  110
+// ─── Speed PID (auto-tuned: Tyreus-Luyben, Ku=9.20, Tu=0.648s) ──────────────
+#define PID_KP   4.18f
+#define PID_KI   2.93f
+#define PID_KD   0.43f
 
 // ─── Tachometer / speed ───────────────────────────────────────────────────────
 // Optical encoder: disc with 62 holes on the central rod (measured by taho_calibrate).
@@ -40,25 +41,24 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define ENCODER_HOLES  62
 #define WHEEL_DIAM_M   0.063f   // 63 mm
 
-volatile unsigned long _last_turnover = 0;
-volatile unsigned long _turnover_time = 0;
+volatile unsigned long _taho_count = 0;
+volatile unsigned long _taho_last  = 0;
+volatile unsigned long _taho_iv    = 0;
 
 void taho_interrupt() {
     unsigned long now   = micros();
-    unsigned long delta = now - _last_turnover;
-    // Debounce: ignore pulses closer than 1 ms
-    // (at 3 m/s pulses arrive every ~3 ms, so 1 ms is safe)
-    if (delta > 1000UL) {
-        _turnover_time = delta;
-        _last_turnover = now;
-    }
+    unsigned long delta = now - _taho_last;
+    if (delta < 500UL) return;   // debounce 500µs
+    _taho_count++;
+    _taho_iv   = delta;
+    _taho_last = now;
 }
 
-// Returns wheel speed in m/s
+// Interval-based speed (for go_back wait loops & stuck detection)
 float get_speed() {
-    unsigned long elapsed = (unsigned long)(micros() - _last_turnover);
-    elapsed = max(elapsed, _turnover_time);
-    if (_turnover_time == 0 || elapsed > _turnover_time * 3UL) return 0.0f;
+    unsigned long elapsed = (unsigned long)(micros() - _taho_last);
+    elapsed = max(elapsed, _taho_iv);
+    if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
     return (3.14159265f * WHEEL_DIAM_M) /
            ((float)ENCODER_HOLES * ((float)elapsed / 1e6f));
 }
@@ -83,8 +83,12 @@ class Car {
 public:
     Servo steer_servo;
     Servo motor_esc;
-    float target_speed = 0.0f;
-    float last_error   = 0.0f;
+    float target_speed   = 0.0f;
+    float pid_integral   = 0.0f;
+    float pid_prev_error = 0.0f;
+    float pid_filtered   = 0.0f;
+    unsigned long pid_prev_cnt = 0;
+    unsigned long pid_prev_ms  = 0;
 
     const int sensor_amount = 4;
 
@@ -176,13 +180,45 @@ int* Car::read_sensors() {
     return values;
 }
 
-// ─── Motor control ────────────────────────────────────────────────────────────
+// ─── Motor control (count-based PID with feedforward) ────────────────────────
 void Car::pid_control_motor() {
-    float spd   = get_speed();
-    float error = target_speed - spd;
-    int   ctrl  = (int)roundf(error * MOTOR_P + (error - last_error) * MOTOR_D);
-    write_speed(constrain(ctrl, 0, 1000));
-    last_error = error;
+    unsigned long now_ms = millis();
+    if (pid_prev_ms == 0) { pid_prev_ms = now_ms; return; }  // first call — init
+
+    float dt = (now_ms - pid_prev_ms) / 1000.0f;
+    if (dt < 0.01f) return;   // too soon
+    pid_prev_ms = now_ms;
+
+    // count-based speed measurement
+    noInterrupts();
+    unsigned long cnt  = _taho_count;
+    unsigned long last = _taho_last;
+    interrupts();
+
+    unsigned long delta_cnt = cnt - pid_prev_cnt;
+    pid_prev_cnt = cnt;
+
+    float raw_speed = (delta_cnt / (float)ENCODER_HOLES) *
+                      (3.14159265f * WHEEL_DIAM_M) / dt;
+
+    // EMA filter
+    pid_filtered = 0.5f * raw_speed + 0.5f * pid_filtered;
+    if ((micros() - last) > 500000UL) pid_filtered = 0;
+
+    // PID
+    float error = target_speed - pid_filtered;
+    pid_integral += error * dt;
+    pid_integral = constrain(pid_integral, -5.0f, 5.0f);
+    float deriv = (error - pid_prev_error) / dt;
+    pid_prev_error = error;
+
+    // feedforward: motor dead zone below MIN_SPEED
+    float ff = (target_speed > 0.01f) ? (float)(MIN_SPEED - NEUTRAL_SPEED) : 0;
+    float output = ff + PID_KP * error + PID_KI * pid_integral + PID_KD * deriv;
+
+    int esc_val = NEUTRAL_SPEED + (int)output;
+    esc_val = constrain(esc_val, NEUTRAL_SPEED, MAX_SPEED);
+    motor_esc.write(esc_val);
 }
 
 void Car::write_speed_ms(float s) {
@@ -190,6 +226,9 @@ void Car::write_speed_ms(float s) {
 }
 
 void Car::write_speed(int s) {
+    // Reset PID state — direct control bypasses PID
+    pid_integral = 0; pid_prev_error = 0; pid_filtered = 0; pid_prev_ms = 0;
+
     s = constrain(s, -1000, 1000);
     if      (s > 0) s = map(s,     1, 1000, MIN_SPEED,  MAX_SPEED);
     else if (s < 0) s = map(s, -1000,   -1, 0,          MIN_BSPEED);

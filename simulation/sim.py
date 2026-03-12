@@ -8,11 +8,14 @@ sim.py — Umbreon roborace algorithm simulator
     python sim.py --fast     # pre-compute full run and plot path + graphs
     python sim.py --ticks N  # control how many 40-ms ticks to run (default 1500)
 
-Sensor layout (bumper-mounted, same as firmware):
-    s[0] L-Out  45° left  of heading, offset 7 cm left
-    s[1] L-Fwd  0°  (straight), offset 3 cm left
-    s[2] R-Fwd  0°  (straight), offset 3 cm right
-    s[3] R-Out  45° right of heading, offset 7 cm right
+Car dimensions (measured):
+    Length: 290 mm   Wheelbase: 173 mm   Track: 120 mm   Wheel ⌀: 60 mm
+
+Sensor layout (bumper-mounted, 80 mm ahead of front axle):
+    s[0] L-Out  45° left  of heading, 90 mm left  of centre
+    s[1] L-Fwd  0°  (straight),       40 mm left  of centre
+    s[2] R-Fwd  0°  (straight),       40 mm right of centre
+    s[3] R-Out  45° right of heading,  90 mm right of centre
 
 Steering convention (matches write_steer() inversion):
     steer_cmd > 0  →  RIGHT turn
@@ -33,46 +36,116 @@ ALL_CLOSE_DIST      =  800   # cm×10  =  80 cm
 CLOSE_FRONT_DIST    =  201   # cm×10  = ~20 cm
 LOOP_MS             =   40   # ms — control period
 
-# ─── Car physics ──────────────────────────────────────────────────────────────
-WHEELBASE    = 0.18            # m  (typical 1:10 RC car)
+# ─── Car physics (measured from real Umbreon) ────────────────────────────────
+CAR_LENGTH   = 0.290           # m  (total body length)
+WHEELBASE    = 0.173           # m  (front-rear axle centre-to-centre)
+TRACK_WIDTH  = 0.120           # m  (rear axle, wheel-to-wheel min)
+WHEEL_DIAM   = 0.060           # m  (60 mm)
+FRONT_OH     = 0.080           # m  (front axle to front bumper ≈ sensor line)
+REAR_OH      = CAR_LENGTH - WHEELBASE - FRONT_OH  # 37 mm
 MAX_STR_RAD  = np.radians(28)  # physical max steering angle
 SPEED_TC     = 5.0             # speed time-constant (Hz) — first-order response
 
 # ─── Sensor layout ────────────────────────────────────────────────────────────
-# Physical layout (all sensors on front bumper):
-#   s[0] Left-Out  — outer left,  45° left  of heading
-#   s[1] Left-Fwd  — center-left, straight (0°), offset 3 cm left  of centreline
-#   s[2] Right-Fwd — center-right,straight (0°), offset 3 cm right of centreline
-#   s[3] Right-Out — outer right, 45° right of heading
-SENSOR_DEG    = [45.0,  0.0,  0.0, -45.0]   # relative to car heading
-SENSOR_LAT_M  = [0.07,  0.03, -0.03, -0.07]  # lateral offset (+ = left)
+# All 4 TF-Luna sensors on front bumper, 80 mm ahead of front axle centre.
+# Lateral offsets from centreline (measured on car):
+#   Central pair (FL, FR): 80 mm apart  → ±40 mm from centre
+#   Outer pair  (L, R):   50 mm further → ±90 mm from centre
+SENSOR_FWD_M  = WHEELBASE + 0.080          # 253 mm ahead of rear axle
+SENSOR_DEG    = [45.0,  0.0,  0.0, -45.0]  # relative to car heading
+SENSOR_LAT_M  = [0.09,  0.04, -0.04, -0.09]  # lateral offset (+ = left)
 SENSOR_NAMES  = ["L-Out", "L-Fwd", "R-Fwd", "R-Out"]
 SENSOR_COLORS = ["tab:green", "tab:blue", "tab:orange", "tab:red"]
 MAX_LIDAR_M   = 8.0    # max LiDAR range
 
 # ─── Track builder ────────────────────────────────────────────────────────────
-# Corridor width ~1.05 m (mid of 0.95–1.15 m regulation range)
+CORRIDOR_W = 1.05   # corridor width (m), mid of 0.95–1.15 regulation range
+
+def _arc_segments(cx, cy, r, a_start, a_end, n=12):
+    """Generate line segments approximating an arc (angles in radians)."""
+    segs = []
+    angles = np.linspace(a_start, a_end, n + 1)
+    for i in range(n):
+        segs.append((cx + r * np.cos(angles[i]),   cy + r * np.sin(angles[i]),
+                      cx + r * np.cos(angles[i+1]), cy + r * np.sin(angles[i+1])))
+    return segs
+
+def _rounded_rect(cx, cy, half_w, half_h, r, n_arc=10):
+    """Rectangle with rounded corners, returned as list of (x1,y1,x2,y2) segments."""
+    segs = []
+    # Clamp radius
+    r = min(r, half_w, half_h)
+    # Straight edges (between corners)
+    # bottom: left→right
+    segs.append((cx - half_w + r, cy - half_h,     cx + half_w - r, cy - half_h))
+    # right:  bottom→top
+    segs.append((cx + half_w,     cy - half_h + r,  cx + half_w,     cy + half_h - r))
+    # top:    right→left
+    segs.append((cx + half_w - r, cy + half_h,     cx - half_w + r, cy + half_h))
+    # left:   top→bottom
+    segs.append((cx - half_w,     cy + half_h - r,  cx - half_w,     cy - half_h + r))
+    # Corner arcs (bottom-right, top-right, top-left, bottom-left)
+    segs += _arc_segments(cx + half_w - r, cy - half_h + r, r, -np.pi/2, 0,       n_arc)
+    segs += _arc_segments(cx + half_w - r, cy + half_h - r, r, 0,        np.pi/2,  n_arc)
+    segs += _arc_segments(cx - half_w + r, cy + half_h - r, r, np.pi/2,  np.pi,    n_arc)
+    segs += _arc_segments(cx - half_w + r, cy - half_h + r, r, np.pi,    3*np.pi/2, n_arc)
+    return segs
+
 def build_track():
     """
-    Rectangular loop:
-      Outer wall: 6 m × 3.5 m
-      Inner wall: 4 m × 1.5 m  (corridor ~1 m on all 4 sides)
+    Complex track with rounded corners, chicane, and narrowing section.
+
+    Layout (~8 × 5 m):
+      - Main oval loop with rounded corners (r=0.8m outer, r-corridor inner)
+      - Chicane barrier in top straight
+      - Narrowing on right side
 
     Car starts in bottom straight, heading east.
     """
-    outer = [
-        (0.0, 0.0,  6.0, 0.0),
-        (6.0, 0.0,  6.0, 3.5),
-        (6.0, 3.5,  0.0, 3.5),
-        (0.0, 3.5,  0.0, 0.0),
-    ]
-    inner = [
-        (1.0, 1.0,  5.0, 1.0),
-        (5.0, 1.0,  5.0, 2.5),
-        (5.0, 2.5,  1.0, 2.5),
-        (1.0, 2.5,  1.0, 1.0),
-    ]
-    return outer + inner, 1.5, 0.5, 0.0   # walls, x0, y0, heading_rad
+    W = CORRIDOR_W
+    # ── Main oval ────────────────────────────────────────────────────────────
+    # Outer boundary: 8 × 5 m, corner radius 0.9
+    out_hw, out_hh, out_r = 4.0, 2.5, 0.9
+    cx, cy = 4.0, 2.5
+    outer = _rounded_rect(cx, cy, out_hw, out_hh, out_r)
+
+    # Inner boundary: shrunk by corridor width
+    in_hw  = out_hw - W
+    in_hh  = out_hh - W
+    in_r   = max(0.1, out_r - W)
+    inner  = _rounded_rect(cx, cy, in_hw, in_hh, in_r)
+
+    walls = outer + inner
+
+    # ── Chicane in top straight ──────────────────────────────────────────────
+    # Two small barriers staggered, forcing S-turn
+    chic_y_out = cy + out_hh           # top outer wall y = 5.0
+    chic_y_in  = cy + out_hh - W       # top inner wall y = 3.95
+    chic_mid   = (chic_y_out + chic_y_in) / 2
+
+    # Barrier 1: sticks out from outer wall toward centre
+    b1x = cx - 0.8
+    walls.append((b1x, chic_y_out, b1x, chic_mid + 0.05))
+    walls.append((b1x - 0.15, chic_mid + 0.05, b1x + 0.15, chic_mid + 0.05))
+
+    # Barrier 2: sticks out from inner wall toward outer
+    b2x = cx + 0.8
+    walls.append((b2x, chic_y_in, b2x, chic_mid - 0.05))
+    walls.append((b2x - 0.15, chic_mid - 0.05, b2x + 0.15, chic_mid - 0.05))
+
+    # ── Narrowing on right side ──────────────────────────────────────────────
+    # Bump inner wall outward on right straight, narrowing corridor to ~0.7 m
+    narrow_x = cx + out_hw - W   # inner wall right side x ≈ 6.95
+    bump = 0.30
+    walls.append((narrow_x + bump, cy - 0.6, narrow_x + bump, cy + 0.6))
+    # Close off the bump top and bottom
+    walls.append((narrow_x, cy - 0.6,  narrow_x + bump, cy - 0.6))
+    walls.append((narrow_x, cy + 0.6,  narrow_x + bump, cy + 0.6))
+    # Remove the inner wall segment behind the bump by covering it
+    # (the bump creates a parallel wall closer to outer)
+
+    # Start position: bottom straight, heading east
+    return walls, 2.5, 0.35, 0.0
 
 # ─── Sensor raycast ───────────────────────────────────────────────────────────
 def _ray_seg(ox, oy, dx, dy, x1, y1, x2, y2):
@@ -90,11 +163,12 @@ def _ray_seg(ox, oy, dx, dy, x1, y1, x2, y2):
 def sense(x, y, h, walls):
     """Return [s0..s3] in cm×10 (9999 if beyond range)."""
     readings = []
-    perp = h + np.pi / 2          # unit vector pointing left of heading
+    ch, sh = np.cos(h), np.sin(h)  # heading unit vector
+    perp = h + np.pi / 2           # unit vector pointing left of heading
     cp, sp = np.cos(perp), np.sin(perp)
     for deg, lat in zip(SENSOR_DEG, SENSOR_LAT_M):
-        ox = x + lat * cp          # sensor origin with lateral offset
-        oy = y + lat * sp
+        ox = x + SENSOR_FWD_M * ch + lat * cp   # forward + lateral offset
+        oy = y + SENSOR_FWD_M * sh + lat * sp
         ang = h + np.radians(deg)
         dx, dy = np.cos(ang), np.sin(ang)
         t_min = MAX_LIDAR_M
@@ -250,7 +324,7 @@ def run_live(walls, x0, y0, h0):
 
     fig, ax = plt.subplots(figsize=(11, 7))
     ax.set_aspect('equal')
-    ax.set_xlim(-0.2, 6.2); ax.set_ylim(-0.2, 3.7)
+    ax.set_xlim(-0.5, 8.5); ax.set_ylim(-0.5, 5.5)
     ax.set_title("Umbreon Roborace — Live simulation  (close window to stop)")
     ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
 
@@ -262,23 +336,39 @@ def run_live(walls, x0, y0, h0):
     ray_lines   = [ax.plot([], [], '-', color=c, alpha=0.75, lw=1.5,
                             label=n)[0]
                    for c, n in zip(SENSOR_COLORS, SENSOR_NAMES)]
-    arrow_ref   = [None]
+    car_patches = [None, None]   # [body_rect, heading_arrow]
     info_box    = ax.text(0.015, 0.97, '', transform=ax.transAxes,
                           va='top', fontsize=8, fontfamily='monospace',
                           bbox=dict(facecolor='white', alpha=0.7, pad=3))
 
     ax.legend(loc='upper right', fontsize=8, ncol=2)
 
-    def _redraw_arrow():
-        if arrow_ref[0] is not None:
-            arrow_ref[0].remove()
-        arrow_ref[0] = mpatches.FancyArrow(
-            sim['x'], sim['y'],
-            0.13 * np.cos(sim['h']),
-            0.13 * np.sin(sim['h']),
-            width=0.06, head_width=0.10,
-            color='steelblue', zorder=6, length_includes_head=True)
-        ax.add_patch(arrow_ref[0])
+    def _redraw_car():
+        for p in car_patches:
+            if p is not None:
+                p.remove()
+        # Car body rectangle (rear-axle is reference point)
+        h = sim['h']
+        cx = sim['x'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.cos(h)
+        cy = sim['y'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.sin(h)
+        angle_deg = np.degrees(h)
+        rect = mpatches.FancyBboxPatch(
+            (-CAR_LENGTH / 2, -TRACK_WIDTH / 2), CAR_LENGTH, TRACK_WIDTH,
+            boxstyle="round,pad=0.005",
+            facecolor='steelblue', alpha=0.6, edgecolor='navy', lw=1.2, zorder=5)
+        t = matplotlib.transforms.Affine2D().rotate(h).translate(cx, cy) + ax.transData
+        rect.set_transform(t)
+        ax.add_patch(rect)
+        car_patches[0] = rect
+        # Heading arrow (small, at front)
+        fx = sim['x'] + (WHEELBASE + FRONT_OH) * np.cos(h)
+        fy = sim['y'] + (WHEELBASE + FRONT_OH) * np.sin(h)
+        arr = mpatches.FancyArrow(
+            fx, fy, 0.04 * np.cos(h), 0.04 * np.sin(h),
+            width=0.02, head_width=0.04,
+            color='navy', zorder=7, length_includes_head=True)
+        ax.add_patch(arr)
+        car_patches[1] = arr
 
     def frame(_):
         # One control tick ───────────────────────────────────────────────────
@@ -298,13 +388,14 @@ def run_live(walls, x0, y0, h0):
 
         # Graphics ────────────────────────────────────────────────────────────
         trail_line.set_data(sim['trail_x'][-800:], sim['trail_y'][-800:])
-        _redraw_arrow()
+        _redraw_car()
 
+        ch, sh = np.cos(sim['h']), np.sin(sim['h'])
         perp = sim['h'] + np.pi / 2
         cp, sp = np.cos(perp), np.sin(perp)
         for i, (deg, lat, rl) in enumerate(zip(SENSOR_DEG, SENSOR_LAT_M, ray_lines)):
-            ox = sim['x'] + lat * cp
-            oy = sim['y'] + lat * sp
+            ox = sim['x'] + SENSOR_FWD_M * ch + lat * cp
+            oy = sim['y'] + SENSOR_FWD_M * sh + lat * sp
             ang = sim['h'] + np.radians(deg)
             d   = min(s[i] / 1000.0, MAX_LIDAR_M)
             rl.set_data([ox, ox + d * np.cos(ang)],

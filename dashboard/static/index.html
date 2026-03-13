@@ -276,6 +276,9 @@ body {
       <h3>Track Map</h3>
       <button class="btn btn-ghost" id="btn-map-clear" style="padding:3px 8px;font-size:10px;">Clear</button>
       <button class="btn btn-ghost" id="btn-map-center" style="padding:3px 8px;font-size:10px;">Center</button>
+      <button class="btn btn-ghost" id="btn-map-rot-cw" style="padding:3px 8px;font-size:10px;" title="Rotate 15° CW">&#x21BB;</button>
+      <button class="btn btn-ghost" id="btn-map-rot-ccw" style="padding:3px 8px;font-size:10px;" title="Rotate 15° CCW">&#x21BA;</button>
+      <button class="btn btn-ghost" id="btn-map-rot-reset" style="padding:3px 8px;font-size:10px;" title="Reset rotation">0°</button>
     </div>
     <div class="map-body"><canvas id="c-map"></canvas></div>
   </div>
@@ -536,20 +539,35 @@ class TrackMapView {
     this.grid = new Set();
     this.scale = 200; // px/m
     this.offX = 0; this.offY = 0;
+    this.rotation = 0; // radians, CW positive in screen space
     this._drag = null;
+    this._rotDrag = null;
 
     this._resizeObs = new ResizeObserver(() => this._resize());
     this._resizeObs.observe(this.canvas.parentElement);
     this._resize();
 
-    this.canvas.addEventListener('mousedown', e => { this._drag = { x: e.clientX, y: e.clientY }; });
-    this.canvas.addEventListener('mousemove', e => {
-      if (!this._drag) return;
-      this.offX += e.clientX - this._drag.x;
-      this.offY += e.clientY - this._drag.y;
-      this._drag = { x: e.clientX, y: e.clientY };
+    this.canvas.addEventListener('contextmenu', e => e.preventDefault());
+    this.canvas.addEventListener('mousedown', e => {
+      if (e.button === 2) {
+        this._rotDrag = { x: e.clientX, y: e.clientY };
+      } else {
+        this._drag = { x: e.clientX, y: e.clientY };
+      }
     });
-    window.addEventListener('mouseup', () => { this._drag = null; });
+    this.canvas.addEventListener('mousemove', e => {
+      if (this._drag) {
+        this.offX += e.clientX - this._drag.x;
+        this.offY += e.clientY - this._drag.y;
+        this._drag = { x: e.clientX, y: e.clientY };
+      }
+      if (this._rotDrag) {
+        const dx = e.clientX - this._rotDrag.x;
+        this.rotation += dx * 0.005;
+        this._rotDrag = { x: e.clientX, y: e.clientY };
+      }
+    });
+    window.addEventListener('mouseup', () => { this._drag = null; this._rotDrag = null; });
     this.canvas.addEventListener('wheel', e => {
       e.preventDefault();
       const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -574,7 +592,7 @@ class TrackMapView {
   }
 
   center() {
-    this.offX = 0; this.offY = 0;
+    this.offX = 0; this.offY = 0; this.rotation = 0;
   }
 
   pushFrame(d) {
@@ -617,9 +635,11 @@ class TrackMapView {
   }
 
   _w2c(wx, wy) {
+    const rx = wx * Math.cos(this.rotation) + wy * Math.sin(this.rotation);
+    const ry = -wx * Math.sin(this.rotation) + wy * Math.cos(this.rotation);
     return [
-      this.w / 2 + wx * this.scale + this.offX,
-      this.h / 2 - wy * this.scale + this.offY,
+      this.w / 2 + rx * this.scale + this.offX,
+      this.h / 2 - ry * this.scale + this.offY,
     ];
   }
 
@@ -661,9 +681,10 @@ class TrackMapView {
       ctx.strokeStyle = '#facc15';
       ctx.lineWidth = 1.5;
       ctx.stroke();
-      // Heading line
-      const hx = cx + 14 * Math.cos(-this.carH);
-      const hy = cy + 14 * Math.sin(-this.carH);
+      // Heading line (adjusted for view rotation)
+      const ha = -(this.carH + this.rotation);
+      const hx = cx + 14 * Math.cos(ha);
+      const hy = cy + 14 * Math.sin(ha);
       ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy);
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
     }
@@ -674,6 +695,9 @@ const trackMap = new TrackMapView('c-map');
 
 document.getElementById('btn-map-clear').addEventListener('click', () => trackMap.clear());
 document.getElementById('btn-map-center').addEventListener('click', () => trackMap.center());
+document.getElementById('btn-map-rot-cw').addEventListener('click', () => { trackMap.rotation += Math.PI / 12; });
+document.getElementById('btn-map-rot-ccw').addEventListener('click', () => { trackMap.rotation -= Math.PI / 12; });
+document.getElementById('btn-map-rot-reset').addEventListener('click', () => { trackMap.rotation = 0; });
 
 // ─── Telemetry Handling ──────────────────────────────────────────────────
 function onTelemetry(d) {

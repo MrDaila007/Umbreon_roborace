@@ -3,10 +3,13 @@
 
 PYTHON   ?= python
 PIP      ?= pip
+CLI      ?= "$(LOCALAPPDATA)/Programs/arduino-ide/resources/app/lib/backend/resources/arduino-cli"
 SIM_DIR   = simulation
 DASH_DIR  = dashboard
 PORT      ?= 8080
 SIM_PORT  ?= 8023
+FQBN     ?= rp2040:rp2040:rpipico2
+SERIAL   ?= auto
 
 # ─── Setup ────────────────────────────────────────────────────────────────
 .PHONY: install
@@ -46,6 +49,19 @@ demo:  ## Start sim bridge + web dashboard (two background processes)
 	@echo "Starting web dashboard on http://localhost:$(PORT)"
 	@echo "Connect to localhost:$(SIM_PORT) in the dashboard"
 	@cd $(DASH_DIR) && $(PYTHON) server.py $(PORT)
+
+# ─── Firmware ─────────────────────────────────────────────────────────
+.PHONY: compile
+compile:  ## Compile firmware (arduino-cli)
+	$(CLI) compile -b $(FQBN) .
+
+.PHONY: upload
+upload:  ## Compile & upload firmware (set SERIAL=COM4 or /dev/ttyACM0)
+ifeq ($(SERIAL),auto)
+	$(CLI) compile -b $(FQBN) . --upload
+else
+	$(CLI) compile -b $(FQBN) . --upload -p $(SERIAL)
+endif
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
 .PHONY: clean

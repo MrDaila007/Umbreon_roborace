@@ -85,6 +85,23 @@ button:active{background:#475569}
   </div>
 </section>
 
+<!-- Track Map -->
+<section>
+  <h2 id="mapH" class="open" onclick="tog('map')">Track Map</h2>
+  <div id="map">
+    <canvas id="mapC" style="width:100%;height:220px;background:#020617;border-radius:4px;touch-action:none"></canvas>
+    <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
+      <button onclick="mapReset()" style="padding:6px 10px;font-size:11px">Reset</button>
+      <button onclick="mapZoom(1.4)" style="padding:6px 10px;font-size:11px">+</button>
+      <button onclick="mapZoom(0.7)" style="padding:6px 10px;font-size:11px">&minus;</button>
+      <label style="font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:4px;margin-left:auto">
+        <input type="checkbox" id="mapFollow" checked> Follow
+      </label>
+      <span style="font-size:10px;color:#64748b" id="mapPos">0, 0</span>
+    </div>
+  </div>
+</section>
+
 <!-- Controls -->
 <section>
   <div class="btns">
@@ -195,19 +212,23 @@ function proc(line){
     var p=line.split(',');
     if(p.length>=8){
       fc++;
+      var s=[parseInt(p[1]),parseInt(p[2]),parseInt(p[3]),parseInt(p[4])];
       $('frames').textContent='#'+fc;
-      $('s0').textContent=(parseInt(p[1])/10).toFixed(1);
-      $('s1').textContent=(parseInt(p[2])/10).toFixed(1);
-      $('s2').textContent=(parseInt(p[3])/10).toFixed(1);
-      $('s3').textContent=(parseInt(p[4])/10).toFixed(1);
+      $('s0').textContent=(s[0]/10).toFixed(1);
+      $('s1').textContent=(s[1]/10).toFixed(1);
+      $('s2').textContent=(s[2]/10).toFixed(1);
+      $('s3').textContent=(s[3]/10).toFixed(1);
       $('steer').textContent=p[5];
       $('speed').textContent=parseFloat(p[6]).toFixed(2)+' m/s';
       $('target').textContent=parseFloat(p[7]).toFixed(1)+' m/s';
-      if(p.length>=10){
+      var hasImu=p.length>=10,yaw=0;
+      if(hasImu){
+        yaw=parseFloat(p[8]);
         $('imuRow').classList.remove('hidden');
-        $('yaw').textContent=parseFloat(p[8]).toFixed(1)+' \u00b0/s';
+        $('yaw').textContent=yaw.toFixed(1)+' \u00b0/s';
         $('heading').textContent=parseFloat(p[9]).toFixed(1)+' \u00b0';
       }
+      mapPush(parseInt(p[0]),s,parseInt(p[5]),parseFloat(p[6]),yaw,hasImu);
     }
   }
 }
@@ -287,6 +308,101 @@ function drvCenter(){
   $('dSteer').value=0;$('dSteerV').textContent='0';
   $('dSpeed').value=0;$('dSpeedV').textContent='0.0';
 }
+
+// --- Track Map ---
+var mx=0,my=0,mh=0,mpm=0,msc=150,mox=0,moy=0;
+var trail=[],walls=[[],[],[],[]],mapDirty=false;
+var SDEG=[45,0,0,-45],SLAT=[.09,.04,-.04,-.09],SFWD=.253,WB=.173,MAXSR=28*Math.PI/180;
+var SCOL=['#2ca02c','#1f77b4','#ff7f0e','#d62728'];
+
+function mapPush(ms,s,st,spd,yaw,hasImu){
+  if(mpm===0){mpm=ms;return}
+  var dt=(ms-mpm)/1000;mpm=ms;
+  if(dt<=0||dt>1)return;
+  if(hasImu){mh+=yaw*Math.PI/180*dt}
+  else{var sa=st/1000*MAXSR;if(Math.abs(sa)>0.001)mh+=spd*dt/(WB/Math.tan(sa))}
+  mx+=spd*dt*Math.cos(mh);my+=spd*dt*Math.sin(mh);
+  trail.push([mx,my]);if(trail.length>600)trail.shift();
+  var ch=Math.cos(mh),sh=Math.sin(mh);
+  for(var i=0;i<4;i++){
+    var dm=s[i]/10000;if(dm<=0||dm>=8)continue;
+    var sx=mx+SFWD*ch-SLAT[i]*sh,sy=my+SFWD*sh+SLAT[i]*ch;
+    var ra=mh+SDEG[i]*Math.PI/180;
+    walls[i].push([sx+dm*Math.cos(ra),sy+dm*Math.sin(ra)]);
+    if(walls[i].length>400)walls[i].shift();
+  }
+  mapDirty=true;
+}
+
+function mapDraw(){
+  var c=$('mapC');if(!c)return;
+  var w=c.clientWidth,h=c.clientHeight;if(w<2)return;
+  c.width=w;c.height=h;
+  var ctx=c.getContext('2d');
+  ctx.fillStyle='#020617';ctx.fillRect(0,0,w,h);
+  var ox=mox,oy=moy;
+  if($('mapFollow').checked&&trail.length>0){ox=-(mx*msc);oy=my*msc}
+  function tx(wx,wy){return[w/2+wx*msc+ox,h/2-wy*msc+oy]}
+  // grid
+  ctx.strokeStyle='#1e293b';ctx.lineWidth=1;
+  var gs=msc<50?1:msc<150?.5:.2;
+  var x0=(-w/2-ox)/msc,x1=(w/2-ox)/msc,y0=(-h/2+oy)/msc,y1=(h/2+oy)/msc;
+  for(var gx=Math.floor(x0/gs)*gs;gx<=x1;gx+=gs){var p=tx(gx,0);ctx.beginPath();ctx.moveTo(p[0],0);ctx.lineTo(p[0],h);ctx.stroke()}
+  for(var gy=Math.floor(y0/gs)*gs;gy<=y1;gy+=gs){var p=tx(0,gy);ctx.beginPath();ctx.moveTo(0,p[1]);ctx.lineTo(w,p[1]);ctx.stroke()}
+  // walls
+  for(var i=0;i<4;i++){ctx.fillStyle=SCOL[i];for(var j=0;j<walls[i].length;j++){var p=tx(walls[i][j][0],walls[i][j][1]);ctx.fillRect(p[0]-1.5,p[1]-1.5,3,3)}}
+  // trail
+  if(trail.length>1){
+    ctx.strokeStyle='#eab308';ctx.lineWidth=1.5;ctx.beginPath();
+    var p0=tx(trail[0][0],trail[0][1]);ctx.moveTo(p0[0],p0[1]);
+    var step=Math.max(1,Math.floor(trail.length/300));
+    for(var j=step;j<trail.length;j+=step){var p=tx(trail[j][0],trail[j][1]);ctx.lineTo(p[0],p[1])}
+    var pl=tx(trail[trail.length-1][0],trail[trail.length-1][1]);ctx.lineTo(pl[0],pl[1]);
+    ctx.stroke();
+  }
+  // car marker
+  if(trail.length>0){
+    var cp=tx(mx,my);
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cp[0],cp[1],5,0,6.283);ctx.fill();
+    ctx.strokeStyle='#eab308';ctx.lineWidth=2;ctx.beginPath();
+    ctx.moveTo(cp[0],cp[1]);ctx.lineTo(cp[0]+14*Math.cos(-mh),cp[1]+14*Math.sin(-mh));ctx.stroke();
+    // sensor rays
+    var ch2=Math.cos(mh),sh2=Math.sin(mh);
+    for(var i=0;i<4;i++){
+      var sx=mx+SFWD*ch2-SLAT[i]*sh2,sy=my+SFWD*sh2+SLAT[i]*ch2;
+      var ra=mh+SDEG[i]*Math.PI/180,rl=0.5;
+      var sp=tx(sx,sy),ep=tx(sx+rl*Math.cos(ra),sy+rl*Math.sin(ra));
+      ctx.strokeStyle=SCOL[i];ctx.lineWidth=1;ctx.globalAlpha=0.4;
+      ctx.beginPath();ctx.moveTo(sp[0],sp[1]);ctx.lineTo(ep[0],ep[1]);ctx.stroke();
+      ctx.globalAlpha=1;
+    }
+  }
+  $('mapPos').textContent=mx.toFixed(2)+', '+my.toFixed(2);
+}
+
+function mapReset(){mx=0;my=0;mh=0;mpm=0;mox=0;moy=0;trail=[];walls=[[],[],[],[]];mapDraw()}
+function mapZoom(f){msc*=f;msc=Math.max(10,Math.min(3000,msc));mapDraw()}
+
+// Touch pan + pinch zoom
+(function(){
+  var c=$('mapC'),drag=null,pinch0=0;
+  c.addEventListener('pointerdown',function(e){
+    if($('mapFollow').checked)$('mapFollow').checked=false;
+    drag={x:e.clientX,y:e.clientY};c.setPointerCapture(e.pointerId)});
+  c.addEventListener('pointermove',function(e){
+    if(!drag)return;mox+=e.clientX-drag.x;moy+=e.clientY-drag.y;
+    drag={x:e.clientX,y:e.clientY};mapDraw()});
+  c.addEventListener('pointerup',function(){drag=null});
+  c.addEventListener('pointercancel',function(){drag=null});
+  c.addEventListener('wheel',function(e){e.preventDefault();mapZoom(e.deltaY<0?1.15:0.87)},{passive:false});
+  c.addEventListener('touchstart',function(e){
+    if(e.touches.length===2){var dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;pinch0=Math.sqrt(dx*dx+dy*dy)}},{passive:true});
+  c.addEventListener('touchmove',function(e){
+    if(e.touches.length===2&&pinch0>0){var dx=e.touches[0].clientX-e.touches[1].clientX,dy=e.touches[0].clientY-e.touches[1].clientY;
+    var d=Math.sqrt(dx*dx+dy*dy);mapZoom(d/pinch0);pinch0=d}},{passive:true});
+})();
+
+setInterval(function(){if(mapDirty){mapDirty=false;mapDraw()}},200);
 
 // --- Toast ---
 var tt=null;

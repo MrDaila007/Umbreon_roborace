@@ -136,22 +136,28 @@ button:active{background:#475569}
   <h2 id="drvH" onclick="tog('drv')">Manual Drive</h2>
   <div id="drv" class="hidden">
     <div class="drv">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="drvEn" onchange="drvToggle(this.checked)">
+          <span id="drvEnLabel" style="color:#ef4444;font-weight:600">LOCKED</span>
+        </label>
+      </div>
       <div class="sr">
         <label>Steer</label>
-        <input type="range" id="dSteer" min="-1000" max="1000" step="50" value="0">
+        <input type="range" id="dSteer" min="-1000" max="1000" step="50" value="0" disabled>
         <span class="sv" id="dSteerV">0</span>
       </div>
       <div class="sr">
         <label>Speed</label>
-        <input type="range" id="dSpeed" min="0" max="3.0" step="0.1" value="0">
+        <input type="range" id="dSpeed" min="0" max="3.0" step="0.1" value="0" disabled>
         <span class="sv" id="dSpeedV">0.0</span>
       </div>
       <div class="btns">
-        <button class="b-go" onclick="drvStart()">Drive</button>
+        <button class="b-go" id="drvGoBtn" onclick="drvStart()" disabled>Drive</button>
         <button class="b-no" onclick="drvStop()">Release</button>
         <button onclick="drvCenter()">Center</button>
       </div>
-      <div style="font-size:11px;color:#64748b">Car must be started first. Release stops sending commands.</div>
+      <div style="font-size:11px;color:#64748b">Enable checkbox to unlock controls. Release stops motors.</div>
     </div>
   </div>
 </section>
@@ -259,8 +265,17 @@ function tog(id){$(id).classList.toggle('hidden');$(id+'H').classList.toggle('op
 $('dSteer').oninput=function(){$('dSteerV').textContent=this.value};
 $('dSpeed').oninput=function(){$('dSpeedV').textContent=parseFloat(this.value).toFixed(1)};
 
+function drvToggle(en){
+  send(en?'$DRVEN':'$DRVOFF');
+  $('dSteer').disabled=!en;
+  $('dSpeed').disabled=!en;
+  $('drvGoBtn').disabled=!en;
+  $('drvEnLabel').textContent=en?'ENABLED':'LOCKED';
+  $('drvEnLabel').style.color=en?'#22c55e':'#ef4444';
+  if(!en)drvStop();
+}
 function drvStart(){
-  if(dt)return;
+  if(dt||!$('drvEn').checked)return;
   dt=setInterval(function(){send('$DRV:'+$('dSteer').value+','+$('dSpeed').value)},200);
 }
 function drvStop(){

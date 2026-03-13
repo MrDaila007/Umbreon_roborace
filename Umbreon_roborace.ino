@@ -84,6 +84,7 @@ bool car_running = false;
 
 // ─── Manual drive mode ($DRV command) ─────────────────────────────────────
 bool manual_mode = false;
+bool drv_enabled = false;       // $DRVEN/$DRVOFF — allows $DRV without $START
 unsigned long last_drv_ms = 0;
 int manual_steer = 0;
 float manual_speed = 0.0f;
@@ -758,6 +759,10 @@ static void cmd_start() {
 
 static void cmd_stop() {
     car_running = false;
+    drv_enabled = false;
+    manual_mode = false;
+    manual_steer = 0;
+    manual_speed = 0.0f;
     car.write_speed(0);
     car.write_steer(0);
     Serial1.println("$ACK");
@@ -801,6 +806,13 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$STATUS") == 0) cmd_status();
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
+    else if (strcmp(line, "$DRVEN")  == 0) { drv_enabled = true;  Serial1.println("$ACK"); }
+    else if (strcmp(line, "$DRVOFF") == 0) {
+        drv_enabled = false; manual_mode = false;
+        manual_steer = 0; manual_speed = 0.0f;
+        car.write_steer(0); car.write_speed(0);
+        Serial1.println("$ACK");
+    }
     // Unknown commands silently ignored
 }
 
@@ -1041,37 +1053,40 @@ void loop() {
     unsigned long now = millis();
     if (now >= next_loop) {
         next_loop = max(now, next_loop + (unsigned long)cfg_loop_ms);
-        if (car_running) {
-            if (manual_mode && (millis() - last_drv_ms < 500)) {
-                // Manual drive mode — apply $DRV commands directly
-                car.poll_lidars();
+
+        // Manual drive ($DRVEN + $DRV) — works without $START
+        bool drv_active = drv_enabled && manual_mode && (millis() - last_drv_ms < 500);
+
+        if (car_running && !drv_active) {
+            // Autonomous mode
+            manual_mode = false;
+            work();
+        } else if (drv_active) {
+            // Manual drive mode — apply $DRV commands directly
+            car.poll_lidars();
 #if USE_IMU
-                car.imu_update();
+            car.imu_update();
 #endif
-                int* s = car.read_sensors();
-                car.write_steer(manual_steer);
-                car.write_speed_ms(manual_speed);
-                car.pid_control_motor();
+            int* s = car.read_sensors();
+            car.write_steer(manual_steer);
+            car.write_speed_ms(manual_speed);
+            car.pid_control_motor();
 #if USE_WIFI_DEBUG
-                Serial1.print(millis());              Serial1.print(',');
-                Serial1.print(s[0]);                  Serial1.print(',');
-                Serial1.print(s[1]);                  Serial1.print(',');
-                Serial1.print(s[2]);                  Serial1.print(',');
-                Serial1.print(s[3]);                  Serial1.print(',');
-                Serial1.print(manual_steer);          Serial1.print(',');
-                Serial1.print(get_speed(), 2);        Serial1.print(',');
-                Serial1.print(manual_speed, 1);
+            Serial1.print(millis());              Serial1.print(',');
+            Serial1.print(s[0]);                  Serial1.print(',');
+            Serial1.print(s[1]);                  Serial1.print(',');
+            Serial1.print(s[2]);                  Serial1.print(',');
+            Serial1.print(s[3]);                  Serial1.print(',');
+            Serial1.print(manual_steer);          Serial1.print(',');
+            Serial1.print(get_speed(), 2);        Serial1.print(',');
+            Serial1.print(manual_speed, 1);
 #if USE_IMU
-                Serial1.print(',');
-                Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
-                Serial1.print(car.heading, 1);
+            Serial1.print(',');
+            Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
+            Serial1.print(car.heading, 1);
 #endif
-                Serial1.println();
+            Serial1.println();
 #endif
-            } else {
-                manual_mode = false;
-                work();
-            }
         }
 #if USE_WIFI_DEBUG
         else {

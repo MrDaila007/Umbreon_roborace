@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Umbreon Dashboard</title>
+<style>
+/* ─── Reset & Base ────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:          #0a0a14;
+  --bg-card:     #11112a;
+  --bg-input:    #181838;
+  --border:      #252550;
+  --border-hi:   #3a3a6a;
+  --accent:      #6366f1;
+  --accent-h:    #818cf8;
+  --success:     #22c55e;
+  --danger:      #ef4444;
+  --warning:     #eab308;
+  --text:        #e2e8f0;
+  --text-m:      #94a3b8;
+  --text-d:      #64748b;
+  --s0: #22c55e; --s1: #3b82f6; --s2: #f97316; --s3: #ef4444;
+  --radius:      8px;
+}
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg); color: var(--text); font-size: 13px;
+  display: flex; flex-direction: column;
+}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+
+/* ─── Toolbar ─────────────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; background: #0d0d20;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.toolbar .logo {
+  font-weight: 700; font-size: 15px; letter-spacing: 0.5px;
+  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  margin-right: 8px;
+}
+.toolbar .sep {
+  width: 1px; height: 22px; background: var(--border); margin: 0 4px;
+}
+.toolbar label { color: var(--text-m); font-size: 12px; }
+.toolbar input[type="text"] {
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; padding: 4px 8px;
+  font-size: 12px; outline: none; transition: border-color .2s;
+}
+.toolbar input[type="text"]:focus { border-color: var(--accent); }
+.toolbar .host-input { width: 120px; }
+.toolbar .port-input { width: 50px; }
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger); transition: background .3s;
+  flex-shrink: 0;
+}
+.status-dot.on { background: var(--success); }
+.toolbar .status-text { font-size: 12px; color: var(--text-m); min-width: 80px; }
+.toolbar .spacer { flex: 1; }
+.toolbar .frame-count { font-size: 12px; color: var(--text-d); font-family: monospace; }
+
+/* ─── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  padding: 5px 12px; border: none; border-radius: 4px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all .15s; color: #fff;
+}
+.btn:active { transform: scale(0.97); }
+.btn-primary { background: var(--accent); }
+.btn-primary:hover { background: var(--accent-h); }
+.btn-success { background: #16a34a; }
+.btn-success:hover { background: #15803d; }
+.btn-warning { background: #ca8a04; }
+.btn-warning:hover { background: #a16207; }
+.btn-danger  { background: #dc2626; }
+.btn-danger:hover  { background: #b91c1c; }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-m);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+
+/* ─── Main Layout ─────────────────────────────────────────────────────────── */
+.main {
+  flex: 1; display: grid; overflow: hidden;
+  grid-template-columns: 1fr 290px;
+  grid-template-rows: 1fr 240px;
+}
+.charts-panel {
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 6px; padding: 6px; overflow: hidden;
+}
+.settings-panel {
+  grid-row: 1 / 3; grid-column: 2;
+  border-left: 1px solid var(--border);
+  overflow-y: auto; padding: 0;
+}
+.map-panel {
+  grid-column: 1; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* ─── Chart Cards ─────────────────────────────────────────────────────────── */
+.chart-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.chart-card .chart-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+}
+.chart-card .chart-title { font-size: 11px; font-weight: 600; color: var(--text-m); text-transform: uppercase; letter-spacing: .5px; }
+.chart-card .chart-legend { display: flex; gap: 10px; }
+.chart-card .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-d); }
+.chart-card .legend-dot { width: 8px; height: 3px; border-radius: 2px; }
+.chart-card .chart-body { flex: 1; position: relative; }
+.chart-card canvas { position: absolute; inset: 0; }
+
+/* ─── Map ─────────────────────────────────────────────────────────────────── */
+.map-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; border-bottom: 1px solid var(--border);
+  background: var(--bg-card); flex-shrink: 0;
+}
+.map-header h3 { font-size: 11px; font-weight: 600; color: var(--text-m); text-transform: uppercase; letter-spacing: .5px; }
+.map-body { flex: 1; position: relative; background: #080812; }
+.map-body canvas { position: absolute; inset: 0; }
+
+/* ─── Settings Panel ──────────────────────────────────────────────────────── */
+.settings-actions {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  padding: 8px 8px 4px; border-bottom: 1px solid var(--border);
+}
+.settings-actions .btn { flex: 1; min-width: 60px; padding: 5px 4px; font-size: 11px; }
+.settings-group { border-bottom: 1px solid var(--border); }
+.settings-group-header {
+  padding: 7px 10px; font-size: 11px; font-weight: 600;
+  color: var(--text-m); cursor: pointer; user-select: none;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: background .15s; text-transform: uppercase; letter-spacing: .3px;
+}
+.settings-group-header:hover { background: rgba(99,102,241,.08); }
+.settings-group-header .chevron {
+  transition: transform .2s; font-size: 10px; color: var(--text-d);
+}
+.settings-group.collapsed .chevron { transform: rotate(-90deg); }
+.settings-group.collapsed .settings-group-body { display: none; }
+.settings-group-body { padding: 2px 8px 8px; }
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 0; gap: 6px;
+}
+.setting-row label { font-size: 11px; color: var(--text-d); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.setting-row input[type="number"], .setting-row input[type="text"] {
+  width: 70px; background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text); border-radius: 4px; padding: 3px 6px; font-size: 12px;
+  text-align: right; outline: none; font-family: monospace;
+}
+.setting-row input:focus { border-color: var(--accent); }
+.setting-row input[readonly] { color: var(--text-d); cursor: default; }
+.setting-row .check-wrap { display: flex; align-items: center; }
+.setting-row input[type="checkbox"] {
+  accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer;
+}
+
+/* ─── Toast ───────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  padding: 8px 20px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  z-index: 100; opacity: 0; transition: opacity .3s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
+.toast.ok { background: #16a34a; color: #fff; }
+.toast.err { background: #dc2626; color: #fff; }
+.toast.info { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- ─── Toolbar ──────────────────────────────────────────────────────────── -->
+<div class="toolbar">
+  <span class="logo">UMBREON</span>
+  <div class="sep"></div>
+  <label>Host</label>
+  <input type="text" class="host-input" id="host" value="192.168.4.1">
+  <label>Port</label>
+  <input type="text" class="port-input" id="port" value="23">
+  <button class="btn btn-primary" id="btn-connect">Connect</button>
+  <div class="status-dot" id="status-dot"></div>
+  <span class="status-text" id="status-text">Disconnected</span>
+  <div class="sep"></div>
+  <button class="btn btn-ghost" id="btn-ping">Ping</button>
+  <button class="btn btn-ghost" id="btn-record">Record</button>
+  <div class="spacer"></div>
+  <span class="frame-count" id="frame-count">Frames: 0</span>
+</div>
+
+<!-- ─── Main ─────────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Charts 2×2 -->
+  <div class="charts-panel">
+    <div class="chart-card" id="card-lidar">
+      <div class="chart-header">
+        <span class="chart-title">LiDAR Distances</span>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:var(--s0)"></span>L-Out</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--s1)"></span>L-Fwd</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--s2)"></span>R-Fwd</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--s3)"></span>R-Out</span>
+        </div>
+      </div>
+      <div class="chart-body"><canvas id="c-lidar"></canvas></div>
+    </div>
+    <div class="chart-card" id="card-speed">
+      <div class="chart-header">
+        <span class="chart-title">Speed</span>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span>Actual</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Target</span>
+        </div>
+      </div>
+      <div class="chart-body"><canvas id="c-speed"></canvas></div>
+    </div>
+    <div class="chart-card" id="card-steer">
+      <div class="chart-header">
+        <span class="chart-title">Steering</span>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#a78bfa"></span>Command</span>
+        </div>
+      </div>
+      <div class="chart-body"><canvas id="c-steer"></canvas></div>
+    </div>
+    <div class="chart-card" id="card-imu">
+      <div class="chart-header">
+        <span class="chart-title">IMU</span>
+        <div class="chart-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#22d3ee"></span>Yaw Rate</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#f59e0b"></span>Heading</span>
+        </div>
+      </div>
+      <div class="chart-body"><canvas id="c-imu"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-panel" id="settings-panel">
+    <div class="settings-actions">
+      <button class="btn btn-primary" id="btn-read">Read</button>
+      <button class="btn btn-primary" id="btn-write">Write</button>
+      <button class="btn btn-warning" id="btn-save-ee">Save EE</button>
+      <button class="btn btn-danger"  id="btn-reset">Reset</button>
+    </div>
+    <div class="settings-actions">
+      <button class="btn btn-ghost" id="btn-load-file">Load File</button>
+      <button class="btn btn-ghost" id="btn-save-file">Save File</button>
+      <button class="btn btn-warning" id="btn-load-ee">Load EE</button>
+    </div>
+    <div id="settings-groups"></div>
+  </div>
+
+  <!-- Track Map -->
+  <div class="map-panel">
+    <div class="map-header">
+      <h3>Track Map</h3>
+      <button class="btn btn-ghost" id="btn-map-clear" style="padding:3px 8px;font-size:10px;">Clear</button>
+      <button class="btn btn-ghost" id="btn-map-center" style="padding:3px 8px;font-size:10px;">Center</button>
+    </div>
+    <div class="map-body"><canvas id="c-map"></canvas></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Hidden file input -->
+<input type="file" id="file-input" accept=".json" style="display:none">
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Umbreon Dashboard — JavaScript
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const WINDOW = 250;
+const SENSOR_COLORS = ['#22c55e', '#3b82f6', '#f97316', '#ef4444'];
+
+// ─── Toast ───────────────────────────────────────────────────────────────
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function toast(msg, type = 'info') {
+  toastEl.textContent = msg;
+  toastEl.className = 'toast show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2500);
+}
+
+// ─── WebSocket ───────────────────────────────────────────────────────────
+let ws = null;
+let carConnected = false;
+let config = null;  // received from server
+let frameCount = 0;
+
+function wsConnect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    handleMessage(msg);
+  };
+  ws.onclose = () => {
+    setTimeout(wsConnect, 1000);  // auto-reconnect to server
+  };
+}
+
+function wsSend(data) {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify(data));
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'status':
+      carConnected = msg.connected;
+      updateStatusUI();
+      break;
+    case 'config':
+      config = msg;
+      buildSettingsPanel();
+      break;
+    case 'telemetry':
+      onTelemetry(msg.data);
+      if (msg.n) frameCount = msg.n;
+      break;
+    case 'response':
+      onResponse(msg.data);
+      break;
+    case 'error':
+      toast(msg.message, 'err');
+      break;
+  }
+}
+
+// ─── Status UI ───────────────────────────────────────────────────────────
+const statusDot  = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const btnConnect = document.getElementById('btn-connect');
+const frameLbl   = document.getElementById('frame-count');
+
+function updateStatusUI() {
+  statusDot.classList.toggle('on', carConnected);
+  statusText.textContent = carConnected ? 'Connected' : 'Disconnected';
+  btnConnect.textContent = carConnected ? 'Disconnect' : 'Connect';
+  btnConnect.className   = carConnected ? 'btn btn-danger' : 'btn btn-primary';
+}
+
+// ─── Toolbar Actions ─────────────────────────────────────────────────────
+btnConnect.addEventListener('click', () => {
+  if (carConnected) {
+    wsSend({ action: 'disconnect' });
+  } else {
+    wsSend({
+      action: 'connect',
+      host: document.getElementById('host').value.trim(),
+      port: parseInt(document.getElementById('port').value) || 23,
+    });
+  }
+});
+
+document.getElementById('btn-ping').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$PING' });
+});
+
+// Recording
+let recording = false;
+let recData = [];
+document.getElementById('btn-record').addEventListener('click', () => {
+  recording = !recording;
+  const btn = document.getElementById('btn-record');
+  if (recording) {
+    recData = [];
+    btn.textContent = 'Stop Rec';
+    btn.className = 'btn btn-danger';
+    toast('Recording started', 'ok');
+  } else {
+    btn.textContent = 'Record';
+    btn.className = 'btn btn-ghost';
+    downloadCSV();
+    toast(`Recorded ${recData.length} frames`, 'ok');
+  }
+});
+
+function downloadCSV() {
+  const header = '#ms,s0,s1,s2,s3,steer,speed,target,yaw,heading\n';
+  const lines = recData.map(d =>
+    `${d.ms},${d.s0},${d.s1},${d.s2},${d.s3},${d.steer},${d.speed.toFixed(2)},${d.target.toFixed(1)},${d.yaw},${d.heading}`
+  );
+  const blob = new Blob([header + lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const now = new Date();
+  a.download = `umbreon_${now.toISOString().slice(0,19).replace(/[T:]/g,'_')}.csv`;
+  a.click();
+}
+
+// ─── Realtime Chart (Canvas) ─────────────────────────────────────────────
+class RealtimeChart {
+  constructor(canvasId, conf) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext('2d');
+    this.conf = conf; // { yMin, yMax, gridLines, series: [{color}] }
+    this.data = conf.series.map(() => []);
+    this.PAD = { top: 6, right: 10, bottom: 4, left: 46 };
+    this._resizeObs = new ResizeObserver(() => this._resize());
+    this._resizeObs.observe(this.canvas.parentElement);
+    this._resize();
+  }
+
+  _resize() {
+    const r = this.canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    this.w = r.width; this.h = r.height;
+    this.canvas.width = this.w * dpr;
+    this.canvas.height = this.h * dpr;
+    this.canvas.style.width  = this.w + 'px';
+    this.canvas.style.height = this.h + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  push(values) {
+    for (let i = 0; i < values.length; i++) {
+      this.data[i].push(values[i]);
+      if (this.data[i].length > WINDOW) this.data[i].shift();
+    }
+  }
+
+  render() {
+    const { ctx, w, h, conf, data, PAD } = this;
+    const pw = w - PAD.left - PAD.right;
+    const ph = h - PAD.top - PAD.bottom;
+    const { yMin, yMax } = conf;
+    const yr = yMax - yMin;
+
+    // Background
+    ctx.fillStyle = '#0e0e24';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    if (conf.gridLines) {
+      for (const gv of conf.gridLines) {
+        const gy = PAD.top + ph - ((gv - yMin) / yr) * ph;
+        ctx.strokeStyle = '#1e1e3e';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(PAD.left, gy); ctx.lineTo(w - PAD.right, gy); ctx.stroke();
+        ctx.fillStyle = '#4a4a7a';
+        ctx.fillText(gv % 1 === 0 ? gv.toFixed(0) : gv.toFixed(1), PAD.left - 4, gy);
+      }
+    }
+
+    // Zero line
+    if (yMin < 0 && yMax > 0) {
+      const z = PAD.top + ph - ((0 - yMin) / yr) * ph;
+      ctx.strokeStyle = '#2a2a5a';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(PAD.left, z); ctx.lineTo(w - PAD.right, z); ctx.stroke();
+    }
+
+    // Data
+    for (let s = 0; s < data.length; s++) {
+      const d = data[s];
+      if (d.length < 2) continue;
+      ctx.strokeStyle = conf.series[s].color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < d.length; i++) {
+        const x = PAD.left + (i / (WINDOW - 1)) * pw;
+        const y = PAD.top + ph - ((d[i] - yMin) / yr) * ph;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+// Create charts
+const chartLidar = new RealtimeChart('c-lidar', {
+  yMin: 0, yMax: 3000,
+  gridLines: [0, 500, 1000, 1500, 2000, 2500, 3000],
+  series: SENSOR_COLORS.map(c => ({ color: c })),
+});
+const chartSpeed = new RealtimeChart('c-speed', {
+  yMin: 0, yMax: 4,
+  gridLines: [0, 1, 2, 3, 4],
+  series: [{ color: '#3b82f6' }, { color: '#ef4444' }],
+});
+const chartSteer = new RealtimeChart('c-steer', {
+  yMin: -800, yMax: 800,
+  gridLines: [-800, -400, 0, 400, 800],
+  series: [{ color: '#a78bfa' }],
+});
+const chartImu = new RealtimeChart('c-imu', {
+  yMin: -200, yMax: 200,
+  gridLines: [-200, -100, 0, 100, 200],
+  series: [{ color: '#22d3ee' }, { color: '#f59e0b' }],
+});
+
+// ─── Track Map (Canvas) ──────────────────────────────────────────────────
+const WHEELBASE = 0.173, SENSOR_FWD = 0.253, MAX_STEER_RAD = 28 * Math.PI / 180;
+const SENSOR_DEG = [45, 0, 0, -45];
+const SENSOR_LAT = [0.09, 0.04, -0.04, -0.09];
+const MAX_LIDAR_M = 8.0;
+const MAP_COLORS = ['#22c55e', '#3b82f6', '#f97316', '#ef4444'];
+const CELL = 0.020; // 20mm grid consolidation
+
+class TrackMapView {
+  constructor(canvasId) {
+    this.canvas = document.getElementById(canvasId);
+    this.ctx = this.canvas.getContext('2d');
+    this.carX = 0; this.carY = 0; this.carH = 0;
+    this.prevMs = null;
+    this.trail = [];
+    this.wallPts = [[], [], [], []];
+    this.grid = new Set();
+    this.scale = 200; // px/m
+    this.offX = 0; this.offY = 0;
+    this._drag = null;
+
+    this._resizeObs = new ResizeObserver(() => this._resize());
+    this._resizeObs.observe(this.canvas.parentElement);
+    this._resize();
+
+    this.canvas.addEventListener('mousedown', e => { this._drag = { x: e.clientX, y: e.clientY }; });
+    this.canvas.addEventListener('mousemove', e => {
+      if (!this._drag) return;
+      this.offX += e.clientX - this._drag.x;
+      this.offY += e.clientY - this._drag.y;
+      this._drag = { x: e.clientX, y: e.clientY };
+    });
+    window.addEventListener('mouseup', () => { this._drag = null; });
+    this.canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const f = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      this.scale = Math.max(10, Math.min(5000, this.scale * f));
+    }, { passive: false });
+  }
+
+  _resize() {
+    const r = this.canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    this.w = r.width; this.h = r.height;
+    this.canvas.width = this.w * dpr;
+    this.canvas.height = this.h * dpr;
+    this.canvas.style.width  = this.w + 'px';
+    this.canvas.style.height = this.h + 'px';
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  clear() {
+    this.carX = 0; this.carY = 0; this.carH = 0; this.prevMs = null;
+    this.trail = []; this.wallPts = [[], [], [], []]; this.grid = new Set();
+  }
+
+  center() {
+    this.offX = 0; this.offY = 0;
+  }
+
+  pushFrame(d) {
+    if (this.prevMs === null) { this.prevMs = d.ms; return; }
+    const dt = (d.ms - this.prevMs) / 1000;
+    this.prevMs = d.ms;
+    if (dt <= 0 || dt > 1) return;
+
+    // Heading
+    if (d.has_imu && d.yaw !== 0) {
+      this.carH += (d.yaw * Math.PI / 180) * dt;
+    } else {
+      const sf = d.steer / 1000;
+      const sa = sf * MAX_STEER_RAD;
+      if (Math.abs(sa) > 0.001) this.carH += (d.speed * dt) / (WHEELBASE / Math.tan(sa));
+    }
+
+    this.carX += d.speed * dt * Math.cos(this.carH);
+    this.carY += d.speed * dt * Math.sin(this.carH);
+    this.trail.push([this.carX, this.carY]);
+
+    // Wall points
+    const dists = [d.s0, d.s1, d.s2, d.s3];
+    const ch = Math.cos(this.carH), sh = Math.sin(this.carH);
+    for (let i = 0; i < 4; i++) {
+      const dm = dists[i] / 10000; // cm×10 → m
+      if (dm <= 0 || dm >= MAX_LIDAR_M) continue;
+      const sx = this.carX + SENSOR_FWD * ch - SENSOR_LAT[i] * sh;
+      const sy = this.carY + SENSOR_FWD * sh + SENSOR_LAT[i] * ch;
+      const ra = this.carH + SENSOR_DEG[i] * Math.PI / 180;
+      const wx = sx + dm * Math.cos(ra);
+      const wy = sy + dm * Math.sin(ra);
+      const gx = Math.floor(wx / CELL), gy = Math.floor(wy / CELL);
+      const key = `${gx},${gy},${i}`;
+      if (!this.grid.has(key)) {
+        this.grid.add(key);
+        this.wallPts[i].push([wx, wy]);
+      }
+    }
+  }
+
+  _w2c(wx, wy) {
+    return [
+      this.w / 2 + wx * this.scale + this.offX,
+      this.h / 2 - wy * this.scale + this.offY,
+    ];
+  }
+
+  render() {
+    const { ctx, w, h } = this;
+    ctx.fillStyle = '#080812';
+    ctx.fillRect(0, 0, w, h);
+
+    // Wall points
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = MAP_COLORS[i];
+      for (const [wx, wy] of this.wallPts[i]) {
+        const [cx, cy] = this._w2c(wx, wy);
+        if (cx < -5 || cx > w + 5 || cy < -5 || cy > h + 5) continue;
+        ctx.fillRect(cx - 1.5, cy - 1.5, 3, 3);
+      }
+    }
+
+    // Trail
+    if (this.trail.length >= 2) {
+      ctx.strokeStyle = 'rgba(250,204,21,0.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const step = Math.max(1, Math.floor(this.trail.length / 2000));
+      for (let j = 0; j < this.trail.length; j += step) {
+        const [cx, cy] = this._w2c(...this.trail[j]);
+        if (j === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+    }
+
+    // Car dot
+    if (this.trail.length > 0) {
+      const [cx, cy] = this._w2c(this.carX, this.carY);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Heading line
+      const hx = cx + 14 * Math.cos(-this.carH);
+      const hy = cy + 14 * Math.sin(-this.carH);
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+    }
+  }
+}
+
+const trackMap = new TrackMapView('c-map');
+
+document.getElementById('btn-map-clear').addEventListener('click', () => trackMap.clear());
+document.getElementById('btn-map-center').addEventListener('click', () => trackMap.center());
+
+// ─── Telemetry Handling ──────────────────────────────────────────────────
+function onTelemetry(d) {
+  chartLidar.push([d.s0, d.s1, d.s2, d.s3]);
+  chartSpeed.push([d.speed, d.target]);
+  chartSteer.push([d.steer]);
+  chartImu.push([d.yaw, d.heading]);
+  trackMap.pushFrame(d);
+  if (recording) recData.push(d);
+}
+
+// ─── Response Handling ───────────────────────────────────────────────────
+function onResponse(resp) {
+  if (resp.type === 'pong') toast('PONG', 'ok');
+  else if (resp.type === 'ack') toast('ACK', 'ok');
+  else if (resp.type === 'nak') toast('NAK: ' + (resp.reason || ''), 'err');
+  else if (resp.type === 'cfg') {
+    applySettings(resp.params);
+    toast('Settings loaded from car', 'ok');
+  }
+}
+
+// ─── Settings Panel ──────────────────────────────────────────────────────
+let settingsInputs = {}; // key → input element
+
+function buildSettingsPanel() {
+  if (!config) return;
+  const container = document.getElementById('settings-groups');
+  container.innerHTML = '';
+
+  for (const [groupName, keys] of Object.entries(config.param_groups)) {
+    const grp = document.createElement('div');
+    grp.className = 'settings-group';
+    const hdr = document.createElement('div');
+    hdr.className = 'settings-group-header';
+    hdr.innerHTML = `<span>${groupName}</span><span class="chevron">&#9660;</span>`;
+    hdr.addEventListener('click', () => grp.classList.toggle('collapsed'));
+    grp.appendChild(hdr);
+
+    const body = document.createElement('div');
+    body.className = 'settings-group-body';
+
+    for (const key of keys) {
+      const row = document.createElement('div');
+      row.className = 'setting-row';
+
+      const label = document.createElement('label');
+      label.textContent = config.key_names[key] || key;
+      label.title = key;
+      row.appendChild(label);
+
+      const isReadonly = config.readonly_keys.includes(key);
+      const isFloat = config.float_keys.includes(key);
+      const def = config.defaults[key];
+
+      if (key === 'RCW') {
+        const wrap = document.createElement('div');
+        wrap.className = 'check-wrap';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!def;
+        cb.dataset.key = key;
+        if (isReadonly) cb.disabled = true;
+        wrap.appendChild(cb);
+        row.appendChild(wrap);
+        settingsInputs[key] = cb;
+      } else {
+        const inp = document.createElement('input');
+        inp.type = 'number';
+        inp.step = isFloat ? '0.01' : '1';
+        inp.value = def;
+        inp.dataset.key = key;
+        if (isReadonly) inp.readOnly = true;
+        row.appendChild(inp);
+        settingsInputs[key] = inp;
+      }
+      body.appendChild(row);
+    }
+    grp.appendChild(body);
+    container.appendChild(grp);
+  }
+}
+
+function getSettingsValues() {
+  const vals = {};
+  for (const [key, el] of Object.entries(settingsInputs)) {
+    if (el.type === 'checkbox') vals[key] = el.checked ? 1 : 0;
+    else vals[key] = el.value;
+  }
+  return vals;
+}
+
+function applySettings(params) {
+  for (const [key, val] of Object.entries(params)) {
+    const el = settingsInputs[key];
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!val;
+    else el.value = val;
+  }
+}
+
+// Settings buttons
+document.getElementById('btn-read').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$GET' });
+});
+document.getElementById('btn-write').addEventListener('click', () => {
+  const vals = getSettingsValues();
+  const ro = config ? config.readonly_keys : [];
+  const pairs = Object.entries(vals).filter(([k]) => !ro.includes(k)).map(([k, v]) => `${k}=${v}`).join(',');
+  wsSend({ action: 'command', cmd: `$SET:${pairs}` });
+});
+document.getElementById('btn-save-ee').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$SAVE' });
+});
+document.getElementById('btn-load-ee').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$LOAD' });
+});
+document.getElementById('btn-reset').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$RST' });
+});
+
+// File I/O
+document.getElementById('btn-save-file').addEventListener('click', () => {
+  const data = { umbreon_settings: true, version: 1, params: getSettingsValues() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'umbreon_settings.json';
+  a.click();
+  toast('Settings saved to file', 'ok');
+});
+
+document.getElementById('btn-load-file').addEventListener('click', () => {
+  document.getElementById('file-input').click();
+});
+document.getElementById('file-input').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (data.params) {
+        applySettings(data.params);
+        toast('Settings loaded from file', 'ok');
+      } else throw new Error('Invalid format');
+    } catch (err) {
+      toast('Load error: ' + err.message, 'err');
+    }
+  };
+  reader.readAsText(f);
+  e.target.value = '';
+});
+
+// ─── Render Loop ─────────────────────────────────────────────────────────
+function renderLoop() {
+  chartLidar.render();
+  chartSpeed.render();
+  chartSteer.render();
+  chartImu.render();
+  frameLbl.textContent = `Frames: ${frameCount}`;
+}
+
+setInterval(renderLoop, 100);   // 10 Hz chart updates
+setInterval(() => trackMap.render(), 200);  // 5 Hz map updates
+
+// ─── Start ───────────────────────────────────────────────────────────────
+wsConnect();
+</script>
+</body>
+</html>

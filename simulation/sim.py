@@ -419,6 +419,7 @@ def run_live(walls, x0, y0, h0):
 # ─── Dashboard bridge (TCP server mimicking DT-06 output) ────────────────────
 import socket
 import threading
+import time
 
 class TelemetryBridge:
     """TCP server that mimics the DT-06 WiFi bridge for dashboard testing."""
@@ -524,23 +525,76 @@ class TelemetryBridge:
                 pass
 
 
-def run_bridge(walls, x0, y0, h0, n_ticks):
-    """Run simulation with live matplotlib + TCP bridge for dashboard."""
+def _bridge_step(sim, walls):
+    """One simulation tick for bridge mode. Returns (s, steer, tgt_v)."""
+    s = sense(sim['x'], sim['y'], sim['h'], walls)
+    sim['sensors']   = s
+    sim['ctrl']['v'] = sim['v']
+    steer, tgt_v     = work(sim['ctrl'], s)
+    sim['steer']     = steer
+    sim['target_v']  = tgt_v
+
+    # Simulated IMU
+    dt = LOOP_MS / 1000.0
+    norm = np.clip(steer / 1000.0, -1, 1)
+    sa = -norm * MAX_STR_RAD
+    if abs(sim['v']) > 0.01 and abs(sa) > 1e-4:
+        omega = sim['v'] / (WHEELBASE / np.tan(sa))
+    else:
+        omega = 0.0
+    sim['yaw_rate'] = np.degrees(omega)
+    sim['heading'] += sim['yaw_rate'] * dt
+
+    for _ in range(CTRL_STEPS):
+        sim['x'], sim['y'], sim['h'], sim['v'] = step_physics(
+            sim['x'], sim['y'], sim['h'], sim['v'], steer, tgt_v)
+
+    sim['trail_x'].append(sim['x'])
+    sim['trail_y'].append(sim['y'])
+    sim['tick'] += 1
+    return s, steer, tgt_v
+
+
+def _make_bridge_sim(x0, y0, h0):
+    return dict(x=x0, y=y0, h=h0, v=0.0,
+                steer=0, target_v=0.0,
+                ctrl={'stuck_time': 0, 'turns': 0.0, 'v': 0.0},
+                trail_x=[x0], trail_y=[y0],
+                sensors=[9999]*4,
+                heading=0.0, yaw_rate=0.0,
+                tick=0)
+
+
+def run_bridge(walls, x0, y0, h0, headless=False):
+    """Run simulation with TCP bridge for dashboard.
+    headless=True: no matplotlib, runs indefinitely (Ctrl+C to stop).
+    headless=False: matplotlib animation + bridge.
+    """
     bridge = TelemetryBridge()
     bridge.start()
+    sim = _make_bridge_sim(x0, y0, h0)
 
-    sim = dict(x=x0, y=y0, h=h0, v=0.0,
-               steer=0, target_v=0.0,
-               ctrl={'stuck_time': 0, 'turns': 0.0, 'v': 0.0},
-               trail_x=[x0], trail_y=[y0],
-               sensors=[9999]*4,
-               heading=0.0, yaw_rate=0.0,
-               tick=0)
+    def _send(s, steer, tgt_v):
+        ms = int(sim['tick'] * LOOP_MS)
+        bridge.send_telemetry(ms, s, steer, sim['v'], tgt_v,
+                              sim['yaw_rate'], sim['heading'])
 
+    if headless:
+        print("  Headless mode -- Ctrl+C to stop")
+        try:
+            while True:
+                s, steer, tgt_v = _bridge_step(sim, walls)
+                _send(s, steer, tgt_v)
+                time.sleep(LOOP_MS / 1000.0)
+        except KeyboardInterrupt:
+            print("\n  Bridge stopped.")
+        return
+
+    # ── GUI mode ─────────────────────────────────────────────────────────
     fig, ax = plt.subplots(figsize=(11, 7))
     ax.set_aspect('equal')
     ax.set_xlim(-0.5, 8.5); ax.set_ylim(-0.5, 5.5)
-    ax.set_title("Umbreon Roborace — Bridge mode  (dashboard on port 8023)")
+    ax.set_title("Umbreon Roborace -- Bridge mode  (dashboard on port 8023)")
     ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
 
     for seg in walls:
@@ -581,39 +635,9 @@ def run_bridge(walls, x0, y0, h0, n_ticks):
         car_patches[1] = arr
 
     def frame(_):
-        s = sense(sim['x'], sim['y'], sim['h'], walls)
-        sim['sensors']      = s
-        sim['ctrl']['v']    = sim['v']
-        steer, tgt_v        = work(sim['ctrl'], s)
-        sim['steer']        = steer
-        sim['target_v']     = tgt_v
+        s, steer, tgt_v = _bridge_step(sim, walls)
+        _send(s, steer, tgt_v)
 
-        # Compute simulated IMU values
-        dt = LOOP_MS / 1000.0
-        norm = np.clip(steer / 1000.0, -1, 1)
-        sa = -norm * MAX_STR_RAD
-        if abs(sim['v']) > 0.01 and abs(sa) > 1e-4:
-            omega = sim['v'] / (WHEELBASE / np.tan(sa))
-        else:
-            omega = 0.0
-        sim['yaw_rate'] = np.degrees(omega)
-        sim['heading'] += sim['yaw_rate'] * dt
-
-        for _ in range(CTRL_STEPS):
-            sim['x'], sim['y'], sim['h'], sim['v'] = step_physics(
-                sim['x'], sim['y'], sim['h'], sim['v'], steer, tgt_v)
-
-        sim['trail_x'].append(sim['x'])
-        sim['trail_y'].append(sim['y'])
-        sim['tick'] += 1
-
-        # Send to dashboard
-        ms = int(sim['tick'] * LOOP_MS)
-        bridge.send_telemetry(
-            ms, s, steer, sim['v'], tgt_v,
-            sim['yaw_rate'], sim['heading'])
-
-        # Graphics
         trail_line.set_data(sim['trail_x'][-800:], sim['trail_y'][-800:])
         _redraw_car()
 
@@ -634,7 +658,7 @@ def run_bridge(walls, x0, y0, h0, n_ticks):
             f"Rf={s[2]/10:5.0f}cm  Ro={s[3]/10:5.0f}cm\n"
             f"stuck = {sim['ctrl']['stuck_time']:2d}    "
             f"turns = {sim['ctrl']['turns']:+6.1f}    "
-            f"yaw = {sim['yaw_rate']:+6.1f}°/s")
+            f"yaw = {sim['yaw_rate']:+6.1f}")
 
         return [trail_line, *ray_lines, info_box]
 
@@ -647,11 +671,13 @@ def run_bridge(walls, x0, y0, h0, n_ticks):
 # ─── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Umbreon roborace simulator")
-    parser.add_argument("--fast",   action="store_true",
+    parser.add_argument("--fast",     action="store_true",
                         help="Pre-compute and plot (no animation)")
-    parser.add_argument("--bridge", action="store_true",
+    parser.add_argument("--bridge",   action="store_true",
                         help="Run sim + TCP bridge for dashboard testing")
-    parser.add_argument("--ticks",  type=int, default=1500,
+    parser.add_argument("--headless", action="store_true",
+                        help="With --bridge: no matplotlib window, runs indefinitely")
+    parser.add_argument("--ticks",    type=int, default=1500,
                         help="Control ticks for --fast mode (default 1500 = 60 s)")
     args = parser.parse_args()
 
@@ -660,6 +686,6 @@ if __name__ == "__main__":
     if args.fast:
         run_fast(walls, x0, y0, h0, args.ticks)
     elif args.bridge:
-        run_bridge(walls, x0, y0, h0, args.ticks)
+        run_bridge(walls, x0, y0, h0, headless=args.headless)
     else:
         run_live(walls, x0, y0, h0)

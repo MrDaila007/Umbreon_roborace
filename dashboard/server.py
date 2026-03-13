@@ -221,7 +221,7 @@ def main():
         except ValueError:
             pass
     app = create_app()
-    print(f"  Umbreon Dashboard → http://localhost:{port}")
+    print(f"  Umbreon Dashboard -> http://localhost:{port}")
     web.run_app(app, host="0.0.0.0", port=port, print=None)
 
 

@@ -56,7 +56,7 @@
 // ─── WiFi mode ──────────────────────────────────────────────────────────────
 // Set to WIFI_STA to connect to your router, WIFI_AP to create own hotspot.
 // In STA mode, falls back to AP if connection fails after STA_TIMEOUT_S.
-#define WIFI_MODE       WIFI_STA
+#define WIFI_MODE       WIFI_AP
 
 // ─── STA credentials (your home/lab WiFi) ───────────────────────────────────
 #define STA_SSID        "YourWiFi"       // ← change this

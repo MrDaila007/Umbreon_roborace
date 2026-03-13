@@ -234,7 +234,7 @@ Click **Record** to save telemetry to a timestamped CSV file (`umbreon_YYYYMMDD_
 
 ## Simulator Bridge
 
-`sim.py --bridge` runs the simulation with a TCP server on port 8023, mimicking the DT-06 WiFi bridge. This lets you test the dashboard without hardware.
+`sim.py --bridge` runs the simulation with a TCP server on port 8023, mimicking the Wemos D1 Mini WiFi bridge. This lets you test the dashboard without hardware.
 
 ```
 cd simulation && python sim.py --bridge

@@ -416,13 +416,13 @@ def run_live(walls, x0, y0, h0):
     plt.tight_layout()
     plt.show()
 
-# ─── Dashboard bridge (TCP server mimicking DT-06 output) ────────────────────
+# ─── Dashboard bridge (TCP server mimicking WiFi bridge output) ────────────────
 import socket
 import threading
 import time
 
 class TelemetryBridge:
-    """TCP server that mimics the DT-06 WiFi bridge for dashboard testing."""
+    """TCP server that mimics the Wemos D1 Mini WiFi bridge for dashboard testing."""
 
     def __init__(self, port=8023):
         self.port = port

@@ -8,7 +8,7 @@ The firmware is split into two layers, with a companion dashboard app:
 |---|---|
 | `luna_car.h` | Hardware abstraction — sensors, actuators, PID, IMU |
 | `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol |
-| `wifi_debug/wifi_debug.ino` | DT-06 firmware — WiFi AP + UART↔TCP bridge |
+| `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge |
 | `dashboard/` | Python app — live plots, track map, remote settings editor |
 
 ---
@@ -233,9 +233,9 @@ See [dashboard.md](dashboard.md) for the full key table and dashboard usage.
 
 ---
 
-## wifi_debug — DT-06 WiFi Telemetry
+## wifi_debug — Wemos D1 Mini WiFi Telemetry
 
-Separate firmware for the DT-06 module (ESP-M2 / ESP8285). Flashed independently via Arduino IDE.
+Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Arduino IDE.
 
 ### What it does
 
@@ -243,11 +243,11 @@ Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **p
 
 ### Wiring
 
-| DT-06 | Pico 2 |
+| D1 Mini | Pico 2 |
 |---|---|
 | RX | GP6 (UART1 TX) |
 | TX | GP7 (UART1 RX) |
-| VCC | 3.3 V |
+| 3V3 | 3.3 V (or power via USB) |
 | GND | GND |
 
 ### Car-side telemetry (`USE_WIFI_DEBUG = 1`)
@@ -276,10 +276,9 @@ A CSV header line is printed once at startup.
 2. Open TCP client to `192.168.4.1:23` (PuTTY Raw, `nc`, telnet, etc.)
 3. CSV telemetry streams in at 25 lines/sec
 
-### Flashing the DT-06
+### Flashing the Wemos D1 Mini
 
 1. Install **ESP8266** board package in Arduino IDE
-2. Select board: **Generic ESP8285 Module**
-3. Flash size: 1 MB (match your module)
-4. Hold **GPIO0 LOW** during reset to enter download mode
-5. Upload `wifi_debug/wifi_debug.ino`
+2. Select board: **LOLIN(WEMOS) D1 mini**
+3. Connect via USB — no manual download-mode wiring needed
+4. Upload `wifi_debug/wifi_debug.ino`

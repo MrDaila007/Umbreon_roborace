@@ -1,5 +1,5 @@
 """
-connection.py — TCP client for Umbreon WiFi telemetry bridge (DT-06).
+connection.py — TCP client for Umbreon WiFi telemetry bridge (Wemos D1 Mini).
 
 Background thread reads lines from 192.168.4.1:23, puts parsed frames
 on rx_queue. Main thread puts commands on tx_queue.

@@ -1,11 +1,13 @@
-<p align="center">
-  <img src="docs/Logo.png" alt="Umbreon Team Logo" width="400">
-</p>
 
 # Umbreon -- Roborace Car Firmware
 
 Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x TF-Luna LiDAR** sensors, with a **live web dashboard** for telemetry, track mapping, and remote tuning.
 
+<p align="center">
+  <img src="docs/Logo.png" alt="Umbreon Team Logo" width="400">
+</p>
+
+## Dashboard Demo
 ![Dashboard Demo](docs/Demo.gif)
 
 ## Hardware

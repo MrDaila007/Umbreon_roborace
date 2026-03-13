@@ -6,7 +6,42 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
 jobs:
+  # ── Code style review (inline PR comments) ───────────────────────
+  style-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff review (Python)
+        uses: reviewdog/action-ruff@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          ruff_args: 'dashboard/ simulation/ ros2/'
+
+      - name: cppcheck
+        uses: reviewdog/action-cppcheck@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          flags: --language=c++ --std=c++17 --enable=warning,performance
+
   # ── Firmware compilation ──────────────────────────────────────────
   firmware-build:
     runs-on: ubuntu-latest

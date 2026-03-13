@@ -4,15 +4,20 @@
  * Protocol-aware bidirectional UART ↔ TCP bridge with built-in web dashboard.
  * Line-buffered relay ensures complete protocol messages are forwarded intact.
  *
+ * WiFi modes (set WIFI_MODE below):
+ *   WIFI_STA  — connect to existing network (set STA_SSID / STA_PASS)
+ *   WIFI_AP   — create own AP "Umbreon" (default fallback if STA fails)
+ *
  * Servers:
  *   Port 80  — HTTP   (serves web dashboard)
  *   Port 81  — WebSocket (real-time bidirectional relay for web UI)
  *   Port 23  — Raw TCP (backward compat with Python dashboard / ROS2 bridge)
  *
  * LED status (built-in LED, GPIO2, active LOW):
- *   Slow blink (1 Hz)  — AP ready, no clients
- *   Fast blink (3 Hz)  — client connected, no car data
- *   Solid ON           — client connected, car data flowing
+ *   Rapid flash       — connecting to WiFi (STA mode)
+ *   Slow blink (1 Hz) — ready, no clients
+ *   Fast blink (3 Hz) — client connected, no car data
+ *   Solid ON          — client connected, car data flowing
  *
  * ─── Dependencies ────────────────────────────────────────────────────────────
  *   "WebSockets" by Markus Sattler — install via Arduino Library Manager
@@ -28,14 +33,19 @@
  * ─── Wiring to Pico 2 ──────────────────────────────────────────────────────
  *   D1 Mini TX  → Pico GP16  (UART1 RX)
  *   D1 Mini RX  → Pico GP17  (UART1 TX)
- *   D1 Mini 3V3 → 3.3 V  (or power via USB)
+ *   D1 Mini 5V  → separate USB (recommended) or shared 5V
  *   D1 Mini GND → GND
  *
  * ─── Usage ──────────────────────────────────────────────────────────────────
- *   1. Power up — module creates AP "Umbreon" (password "12345678")
- *   2. Connect laptop/phone to the AP
- *   3. Open http://192.168.4.1 in a browser for the web dashboard
- *      — or connect via raw TCP to 192.168.4.1:23 for the Python dashboard
+ *   STA mode:
+ *     1. Set STA_SSID / STA_PASS to your WiFi credentials
+ *     2. Power up — LED flashes while connecting
+ *     3. Check Serial Monitor or UART for assigned IP
+ *     4. Open http://<ip> in browser, or connect via TCP to <ip>:23
+ *   AP mode (fallback):
+ *     1. Power up — creates AP "Umbreon" (password "12345678")
+ *     2. Connect phone/laptop to the AP
+ *     3. Open http://192.168.4.1 in browser
  */
 
 #include <ESP8266WiFi.h>
@@ -43,9 +53,21 @@
 #include <WebSocketsServer.h>
 #include "web_ui.h"
 
-// ─── Configuration ──────────────────────────────────────────────────────────
+// ─── WiFi mode ──────────────────────────────────────────────────────────────
+// Set to WIFI_STA to connect to your router, WIFI_AP to create own hotspot.
+// In STA mode, falls back to AP if connection fails after STA_TIMEOUT_S.
+#define WIFI_MODE       WIFI_STA
+
+// ─── STA credentials (your home/lab WiFi) ───────────────────────────────────
+#define STA_SSID        "YourWiFi"       // ← change this
+#define STA_PASS        "YourPassword"   // ← change this
+#define STA_TIMEOUT_S   15               // seconds to wait before AP fallback
+
+// ─── AP credentials (fallback / competition) ────────────────────────────────
 #define AP_SSID   "Umbreon"
 #define AP_PASS   "12345678"   // min 8 chars for WPA2
+
+// ─── Ports ──────────────────────────────────────────────────────────────────
 #define TCP_PORT  23
 #define HTTP_PORT 80
 #define WS_PORT   81
@@ -113,6 +135,19 @@ static void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
     }
 }
 
+// ─── WiFi state ─────────────────────────────────────────────────────────────
+static bool wifi_is_sta = false;   // true if connected in STA mode
+
+static void start_ap() {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    wifi_is_sta = false;
+    Serial.print("# Mode:  AP\n# SSID:  ");
+    Serial.println(AP_SSID);
+    Serial.print("# IP:    ");
+    Serial.println(WiFi.softAPIP());
+}
+
 // ─── Setup ──────────────────────────────────────────────────────────────────
 void setup() {
     pinMode(LED, OUTPUT);
@@ -124,11 +159,37 @@ void setup() {
     Serial.println();
     Serial.println("# ── Umbreon WiFi Bridge ──");
     Serial.println("# Board: Wemos D1 Mini");
-    Serial.print("# SSID:  "); Serial.println(AP_SSID);
 
-    WiFi.softAP(AP_SSID, AP_PASS);
+    // ── Connect to WiFi ─────────────────────────────────────────────────────
+    if (WIFI_MODE == WIFI_STA) {
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(STA_SSID, STA_PASS);
+        Serial.print("# STA:   "); Serial.println(STA_SSID);
+        Serial.print("# Connecting");
 
-    Serial.print("# IP:    "); Serial.println(WiFi.softAPIP());
+        unsigned long t0 = millis();
+        while (WiFi.status() != WL_CONNECTED) {
+            // Rapid flash while connecting
+            ((millis() / 80) % 2) ? led_off() : led_on();
+            delay(100);
+            Serial.print(".");
+            if (millis() - t0 > (unsigned long)STA_TIMEOUT_S * 1000) {
+                Serial.println(" timeout!");
+                Serial.println("# Falling back to AP mode");
+                start_ap();
+                break;
+            }
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+            wifi_is_sta = true;
+            Serial.println(" ok");
+            Serial.print("# IP:    "); Serial.println(WiFi.localIP());
+        }
+    } else {
+        start_ap();
+    }
+
     Serial.print("# TCP:   "); Serial.println(TCP_PORT);
     Serial.print("# HTTP:  "); Serial.println(HTTP_PORT);
     Serial.print("# WS:    "); Serial.println(WS_PORT);
@@ -153,6 +214,15 @@ void setup() {
 
 // ─── Loop ───────────────────────────────────────────────────────────────────
 void loop() {
+    // ── STA reconnect ───────────────────────────────────────────────────────
+    if (wifi_is_sta && WiFi.status() != WL_CONNECTED) {
+        static unsigned long last_reconn = 0;
+        if (millis() - last_reconn > 5000) {
+            last_reconn = millis();
+            WiFi.reconnect();
+        }
+    }
+
     // Service HTTP and WebSocket
     httpServer.handleClient();
     wsServer.loop();
@@ -165,8 +235,10 @@ void loop() {
             tcpClient = nc;
             tcpClient.setNoDelay(true);
             tcpClient.println("# Umbreon WiFi Bridge \xe2\x80\x94 connected");
-            tcpClient.print("# IP: ");      tcpClient.println(WiFi.softAPIP());
-            tcpClient.print("# Clients: "); tcpClient.println(WiFi.softAPgetStationNum());
+            tcpClient.print("# IP: ");
+            tcpClient.println(wifi_is_sta ? WiFi.localIP() : WiFi.softAPIP());
+            tcpClient.print("# Mode: ");
+            tcpClient.println(wifi_is_sta ? "STA" : "AP");
             Serial.println("# TCP client connected");
         }
     }

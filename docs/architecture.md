@@ -2,12 +2,14 @@
 
 ## Overview
 
-The firmware is split into two layers:
+The firmware is split into two layers, with a companion dashboard app:
 
 | File | Role |
 |---|---|
-| `luna_car.h` | Hardware abstraction — sensors, actuators, PID |
-| `Umbreon_roborace.ino` | Control logic — steering, speed, stuck/U-turn recovery |
+| `luna_car.h` | Hardware abstraction — sensors, actuators, PID, IMU |
+| `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol |
+| `wifi_debug/wifi_debug.ino` | DT-06 firmware — WiFi AP + UART↔TCP bridge |
+| `dashboard/` | Python app — live plots, track map, remote settings editor |
 
 ---
 
@@ -145,9 +147,9 @@ loop()
     ├── steering
     ├── speed
     ├── pid_control_motor()
+    ├── WiFi telemetry        // (if USE_WIFI_DEBUG)
     ├── stuck check
-    ├── U-turn check
-    └── wrong-direction check  // (if USE_IMU)
+    └── wrong-direction / dead-end check
 ```
 
 ### Steering logic
@@ -179,34 +181,105 @@ If `s[1] < 20 cm` OR `s[2] < 20 cm` OR `speed < 0.1 m/s` for more than **25 cons
 2. `go_back()` — short reverse manoeuvre
 3. Resume forward at 2 m/s
 
-### U-turn / dead-end detection
+### Wrong-direction / dead-end detection
 
-An accumulator `turns` integrates `diff × speed / -1000` each tick. It is clamped to [-1500, +50].
+A single accumulator `turns` detects when the car is going the wrong way. The data source depends on `USE_IMU`:
 
-When `turns < -18`:
-1. Stop
-2. Steer hard right (1000) for 20 ms
-3. `go_back_long()` — longer reverse
-4. Steer left (-700), drive forward at 2 m/s for 900 ms
-5. Reset `turns = 0`
+| Mode | Source | Trigger |
+|---|---|---|
+| `USE_IMU = 1` | Gyro Z yaw rate (°/s × dt) | `turns > WRONG_DIR_DEG` (CW) or `turns < -WRONG_DIR_DEG` (CCW) |
+| `USE_IMU = 0` | Heuristic `diff × speed / -1000` | `turns < -18` |
 
-### Wrong-direction detection (IMU)
+**With IMU:** correct-direction accumulation decays ×0.97/tick so normal laps don't false-trigger. Recovery steers toward the correct race direction based on `RACE_CW`.
 
-*Only active when `USE_IMU = 1`.*
-
-Uses the gyro Z yaw rate to detect when the car is travelling opposite to the race direction.
-
-An accumulator `wd` integrates `yaw_rate × dt` each tick:
-- **Clockwise race** (`RACE_CW = true`): normal driving produces negative yaw (right turns). Positive accumulation = wrong direction.
-- **Counter-clockwise** (`RACE_CW = false`): the opposite.
-
-Correct-direction accumulation decays by ×0.97 per tick, preventing false triggers during normal laps. Wrong-direction heading builds freely until it crosses `WRONG_DIR_DEG` (default 120°).
+**Without IMU:** same heuristic as before — sustained one-direction steering at speed builds up `turns` until it crosses the threshold. Recovery always steers hard right then left.
 
 When triggered:
 1. Stop
-2. Steer hard toward the correct race direction
+2. Steer hard toward correct direction (or hard right without IMU)
 3. `go_back_long()` — long reverse
 4. Steer opposite, drive forward at 2 m/s for 900 ms
-5. Reset accumulator and `heading`
+5. Reset `turns = 0` (and `heading` if IMU)
 
-The heading accumulator is also reset after stuck and U-turn recoveries to avoid stale data influencing detection.
+---
+
+## Runtime Configuration & EEPROM
+
+All tuning parameters (obstacle thresholds, PID gains, ESC/steering limits, speed coefficients, etc.) are stored as `cfg_*` global variables with compile-time defaults. They can be changed at runtime via the command protocol and persisted to EEPROM.
+
+`luna_car.h` declares them as `extern`; `Umbreon_roborace.ino` defines and initialises them.
+
+### EEPROM layout
+
+A packed `CarSettings` struct at address 0 (~42 bytes):
+- Magic `0x554D4252` ("UMBR"), version byte, all parameters, trailing checksum
+- `load_settings()` in `setup()` validates magic + version + checksum before applying
+- `save_settings()` populates struct, computes checksum, writes via `EEPROM.put()` + `commit()`
+
+### Command protocol
+
+ASCII over the existing WiFi TCP bridge. Processed in `loop()` via `process_commands()`.
+
+| Command | Response | Description |
+|---|---|---|
+| `$PING` | `$PONG` | Connection test |
+| `$GET` | `$CFG:FOD=1200,...` | Read all parameters |
+| `$SET:KP=5.0` | `$ACK` / `$NAK:reason` | Set parameters |
+| `$SAVE` | `$ACK` | Persist to EEPROM |
+| `$LOAD` | `$ACK` / `$NAK` | Restore from EEPROM |
+| `$RST` | `$ACK` | Reset to compile-time defaults |
+
+See [dashboard.md](dashboard.md) for the full key table and dashboard usage.
+
+---
+
+## wifi_debug — DT-06 WiFi Telemetry
+
+Separate firmware for the DT-06 module (ESP-M2 / ESP8285). Flashed independently via Arduino IDE.
+
+### What it does
+
+Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **port 23**. Bidirectional transparent bridge: everything the car sends over UART appears on the TCP socket, and vice versa.
+
+### Wiring
+
+| DT-06 | Pico 2 |
+|---|---|
+| RX | GP6 (UART1 TX) |
+| TX | GP7 (UART1 RX) |
+| VCC | 3.3 V |
+| GND | GND |
+
+### Car-side telemetry (`USE_WIFI_DEBUG = 1`)
+
+Each control tick (25 Hz) the car sends a CSV line over UART1:
+
+```
+ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]
+```
+
+| Field | Unit | Description |
+|---|---|---|
+| ms | ms | `millis()` timestamp |
+| s0–s3 | cm×10 | LiDAR distances (Left, FL, FR, Right) |
+| steer | — | Steering command sent (`diff × coef`) |
+| speed | m/s | Measured wheel speed |
+| target | m/s | Target speed |
+| yaw | °/s | Gyro Z rate (only if `USE_IMU`) |
+| heading | ° | Accumulated heading (only if `USE_IMU`) |
+
+A CSV header line is printed once at startup.
+
+### Connecting
+
+1. Connect to WiFi AP **Umbreon**
+2. Open TCP client to `192.168.4.1:23` (PuTTY Raw, `nc`, telnet, etc.)
+3. CSV telemetry streams in at 25 lines/sec
+
+### Flashing the DT-06
+
+1. Install **ESP8266** board package in Arduino IDE
+2. Select board: **Generic ESP8285 Module**
+3. Flash size: 1 MB (match your module)
+4. Hold **GPIO0 LOW** during reset to enter download mode
+5. Upload `wifi_debug/wifi_debug.ino`

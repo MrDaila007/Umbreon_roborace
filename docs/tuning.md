@@ -3,40 +3,37 @@
 All distances are in **cm×10** (e.g. `1200` = 120 cm).
 Speed values are in **m/s**.
 
----
-
-## Obstacle Thresholds (`Umbreon_roborace.ino`)
-
-| Constant | Default | What to change |
-|---|---|---|
-| `FRONT_OBSTACLE_DIST` | 1200 | Distance at which the car starts steering around a front obstacle. Increase for earlier reaction; decrease to get closer to walls before turning. |
-| `SIDE_OPEN_DIST` | 1000 | If both side sensors read above this, the corridor is treated as open and the car biases toward the right wall. |
-| `ALL_CLOSE_DIST` | 800 | If all 4 sensors read below this, the car forces a hard right turn. Increase if getting stuck in wide but tight spaces. |
-| `CLOSE_FRONT_DIST` | 201 | Emergency threshold — triggers stuck counter. Set to ~2× the minimum reliable TF-Luna range (~20 cm). |
+Parameters can be changed at runtime via the **dashboard** (see [dashboard.md](dashboard.md)) or by editing the compile-time defaults in `Umbreon_roborace.ino`. Runtime changes can be persisted to EEPROM with `$SAVE`.
 
 ---
 
-## Speed & Steering Coefficients (`work()`)
+## Obstacle Thresholds
 
-```cpp
-case 0:                         // path clear
-    coef = 0.3f; spd = 2.7f;
-    break;
-default:                        // obstacle ahead
-    coef = 0.7f; spd = 0.8f;
-```
-
-- **`spd` (clear)** — top straight-line speed. Reduce if the car overshoots corners.
-- **`spd` (blocked)** — cornering speed. Increase if the car is too slow around bends.
-- **`coef` (clear)** — steering gain when path is free. Higher = more aggressive wall-following.
-- **`coef` (blocked)** — steering gain while avoiding obstacle. Higher = sharper turns.
+| Key | Variable | Default | What to change |
+|---|---|---|---|
+| `FOD` | `cfg_front_obstacle_dist` | 1200 | Distance at which the car starts steering around a front obstacle. Increase for earlier reaction; decrease to get closer to walls before turning. |
+| `SOD` | `cfg_side_open_dist` | 1000 | If both side sensors read above this, the corridor is treated as open and the car biases toward the right wall. |
+| `ACD` | `cfg_all_close_dist` | 800 | If all 4 sensors read below this, the car forces a hard right turn. Increase if getting stuck in wide but tight spaces. |
+| `CFD` | `cfg_close_front_dist` | 201 | Emergency threshold — triggers stuck counter. Set to ~2× the minimum reliable TF-Luna range (~20 cm). |
 
 ---
 
-## Stuck Recovery (`stuck_time > 25`)
+## Speed & Steering Coefficients
 
-- **25 ticks** at 40 ms/tick = **1 second** before triggering reversal.
-- Reduce the threshold (e.g. `15`) to react faster; increase to tolerate brief slowdowns.
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `SPD1` | `cfg_spd_clear` | 2.7 | Top straight-line speed (m/s). Reduce if the car overshoots corners. |
+| `SPD2` | `cfg_spd_blocked` | 0.8 | Cornering speed. Increase if the car is too slow around bends. |
+| `COE1` | `cfg_coe_clear` | 0.3 | Steering gain when path is free. Higher = more aggressive wall-following. |
+| `COE2` | `cfg_coe_blocked` | 0.7 | Steering gain while avoiding obstacle. Higher = sharper turns. |
+
+---
+
+## Stuck Recovery
+
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `STK` | `cfg_stuck_thresh` | 25 | Ticks before triggering reversal (25 × 40 ms = 1 s). Reduce to react faster; increase to tolerate brief slowdowns. |
 
 `go_back()` timing:
 ```cpp
@@ -47,9 +44,13 @@ Increase the second `delay` if the car needs more room to clear an obstacle.
 
 ---
 
-## U-Turn Detection (`turns < -18.0`)
+## Wrong-Direction / Dead-End Detection (`turns`)
 
-`turns` accumulates `diff × speed / -1000` each tick.
+A single `turns` accumulator feeds from either IMU gyro or steering heuristic.
+
+**With IMU (`USE_IMU = 1`):** `turns` accumulates real gyro heading (°). See the IMU tuning section below for thresholds.
+
+**Without IMU (`USE_IMU = 0`):** `turns` accumulates `diff × speed / -1000` each tick.
 
 - **Threshold `-18.0`** — lower magnitude = triggers faster (e.g. `-10`); higher = less sensitive.
 - **Clamp `[-1500, +50]`** — the negative clamp prevents runaway accumulation in long corridors.
@@ -65,11 +66,11 @@ Increase delays on longer cars or tighter dead ends.
 
 ## Wrong-Direction Detection — IMU (`USE_IMU = 1`)
 
-| Constant | Default | What to change |
-|---|---|---|
-| `USE_IMU` | `1` | Set to `0` to disable IMU entirely (no `Wire.h` linked). |
-| `RACE_CW` | `true` | Set to `false` for counter-clockwise races. |
-| `WRONG_DIR_DEG` | `120.0` | Degrees of wrong-direction heading before recovery triggers. Lower = more sensitive (may false-trigger on tight hairpins). Higher = slower reaction. |
+| Key | Variable | Default | What to change |
+|---|---|---|---|
+| `IMU` | `USE_IMU` | `1` | Compile-time only. Set to `0` to disable IMU entirely (no `Wire.h` linked). |
+| `RCW` | `cfg_race_cw` | `1` | Set to `0` for counter-clockwise races. Changeable at runtime. |
+| `WDD` | `cfg_wrong_dir_deg` | `120.0` | Degrees of wrong-direction heading before recovery triggers. Lower = more sensitive (may false-trigger on tight hairpins). Higher = slower reaction. |
 
 **Decay factor** (hardcoded `0.97`): correct-direction heading decays by 3 % per tick. At 25 Hz this halves in ~0.9 s. Increase toward `1.0` if you want the detector to remember longer history; decrease if tight corners cause false triggers.
 
@@ -81,40 +82,45 @@ Increase delays on longer cars or tighter dead ends.
 
 ---
 
-## ESC / Servo Limits (`luna_car.h`)
+## ESC / Servo Limits
 
-| Constant | Default | Effect |
-|---|---|---|
-| `MIN_SPEED` | 96 | Minimum ESC PWM for forward (too low = no movement) |
-| `MAX_SPEED` | 110 | Maximum ESC PWM for forward (increase for more top speed) |
-| `MIN_BSPEED` | 85 | Minimum ESC PWM for reverse |
-| `MIN_POINT` | 40 | Maximum left steering angle (degrees) |
-| `MAX_POINT` | 140 | Maximum right steering angle (degrees) |
-| `NEUTRAL_POINT` | 90 | Straight-ahead servo angle |
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `MSP` | `cfg_min_speed` | 96 | Minimum ESC PWM for forward (too low = no movement) |
+| `XSP` | `cfg_max_speed` | 110 | Maximum ESC PWM for forward (increase for more top speed) |
+| `BSP` | `cfg_min_bspeed` | 85 | Minimum ESC PWM for reverse |
+| `MNP` | `cfg_min_point` | 40 | Maximum left steering angle (degrees) |
+| `XNP` | `cfg_max_point` | 140 | Maximum right steering angle (degrees) |
+| `NTP` | `cfg_neutral_point` | 90 | Straight-ahead servo angle |
 
 > Always verify ESC neutral (90°) matches your ESC calibration before driving.
 
 ---
 
-## PID Speed Controller (`luna_car.h`)
+## PID Speed Controller
 
-| Gain | Default | Effect |
-|---|---|---|
-| `MOTOR_P` | 200 | Proportional — higher = faster speed correction, risk of oscillation |
-| `MOTOR_D` | 110 | Derivative — damps oscillation; increase if speed hunts |
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `KP` | `cfg_pid_kp` | 4.18 | Proportional — higher = faster speed correction, risk of oscillation |
+| `KI` | `cfg_pid_ki` | 2.93 | Integral — eliminates steady-state error; too high = overshoot |
+| `KD` | `cfg_pid_kd` | 0.43 | Derivative — damps oscillation; increase if speed hunts |
 
-Typical tuning procedure:
-1. Set `MOTOR_D = 0`, increase `MOTOR_P` until speed tracks well but oscillates.
-2. Increase `MOTOR_D` until oscillation damps out.
+Defaults were auto-tuned (Tyreus-Luyben method, Ku=9.20, Tu=0.648s).
+
+Typical manual tuning:
+1. Set `KI = 0`, `KD = 0`, increase `KP` until speed tracks well but oscillates.
+2. Increase `KD` until oscillation damps out.
+3. Add small `KI` to eliminate steady-state error.
 
 ---
 
-## Loop Period (`LOOP_MS`)
+## Loop Period
 
-Default: **40 ms** (25 Hz).
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `LMS` | `cfg_loop_ms` | 40 | Control loop period in ms (25 Hz). Decrease for faster response at high speed. |
 
-- Decrease (e.g. `20`) for faster response at high speed.
-- `poll_lidars()` is also called outside the timed block, so LiDAR data is always fresh regardless of loop period.
+`poll_lidars()` is also called outside the timed block, so LiDAR data is always fresh regardless of loop period.
 
 ---
 

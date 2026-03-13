@@ -4,9 +4,10 @@ sim.py — Umbreon roborace algorithm simulator
 2-D top-down environment, kinematic bicycle model, 4× LiDAR rays.
 
     pip install numpy matplotlib
-    python sim.py            # live animation
-    python sim.py --fast     # pre-compute full run and plot path + graphs
-    python sim.py --ticks N  # control how many 40-ms ticks to run (default 1500)
+    python sim.py              # live animation
+    python sim.py --fast       # pre-compute full run and plot path + graphs
+    python sim.py --ticks N    # control how many 40-ms ticks to run (default 1500)
+    python sim.py --bridge     # run sim + TCP server for dashboard testing
 
 Car dimensions (measured):
     Length: 290 mm   Wheelbase: 173 mm   Track: 120 mm   Wheel ⌀: 60 mm
@@ -415,12 +416,242 @@ def run_live(walls, x0, y0, h0):
     plt.tight_layout()
     plt.show()
 
+# ─── Dashboard bridge (TCP server mimicking DT-06 output) ────────────────────
+import socket
+import threading
+
+class TelemetryBridge:
+    """TCP server that mimics the DT-06 WiFi bridge for dashboard testing."""
+
+    def __init__(self, port=8023):
+        self.port = port
+        self.clients = []
+        self.lock = threading.Lock()
+        self._server = None
+        self._cfg = dict(
+            FOD=FRONT_OBSTACLE_DIST, SOD=SIDE_OPEN_DIST,
+            ACD=ALL_CLOSE_DIST, CFD=CLOSE_FRONT_DIST,
+            KP=4.18, KI=2.93, KD=0.43,
+            MSP=96, XSP=110, BSP=85,
+            MNP=40, XNP=140, NTP=90,
+            ENH=62, WDM=0.060, LMS=LOOP_MS,
+            SPD1=2.7, SPD2=0.8, COE1=0.3, COE2=0.7,
+            WDD=120.0, RCW=1, STK=25, IMU=1, DBG=1,
+        )
+
+    def start(self):
+        self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server.bind(('0.0.0.0', self.port))
+        self._server.listen(2)
+        self._server.settimeout(0.5)
+        t = threading.Thread(target=self._accept_loop, daemon=True)
+        t.start()
+        print(f"  Bridge TCP server on port {self.port}")
+        print(f"  Dashboard: connect to localhost:{self.port}")
+
+    def _accept_loop(self):
+        while True:
+            try:
+                conn, addr = self._server.accept()
+                conn.setblocking(False)
+                with self.lock:
+                    self.clients.append(conn)
+                try:
+                    conn.sendall(b"#ms,s0,s1,s2,s3,steer,speed,target,yaw,heading\n")
+                except OSError:
+                    pass
+                print(f"  Dashboard client connected: {addr}")
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+    def send_telemetry(self, ms, s, steer, speed, target, yaw=0.0, heading=0.0):
+        line = (f"{ms},{s[0]},{s[1]},{s[2]},{s[3]},"
+                f"{steer},{speed:.2f},{target:.1f},"
+                f"{yaw:.1f},{heading:.1f}\n")
+        data = line.encode('ascii')
+        with self.lock:
+            dead = []
+            for c in self.clients:
+                try:
+                    c.sendall(data)
+                except OSError:
+                    dead.append(c)
+                # Check for incoming commands
+                try:
+                    cmd_data = c.recv(256)
+                    if cmd_data:
+                        self._handle_commands(c, cmd_data.decode('ascii', errors='replace'))
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    dead.append(c)
+            for c in dead:
+                try:
+                    c.close()
+                except OSError:
+                    pass
+                if c in self.clients:
+                    self.clients.remove(c)
+
+    def _handle_commands(self, conn, raw):
+        for line in raw.strip().split('\n'):
+            line = line.strip()
+            if not line.startswith('$'):
+                continue
+            try:
+                if line == '$PING':
+                    conn.sendall(b'$PONG\n')
+                elif line == '$GET':
+                    pairs = ','.join(f'{k}={v}' for k, v in self._cfg.items())
+                    conn.sendall(f'$CFG:{pairs}\n'.encode())
+                elif line.startswith('$SET:'):
+                    for pair in line[5:].split(','):
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            k = k.strip()
+                            if k in self._cfg:
+                                try:
+                                    self._cfg[k] = float(v) if '.' in v else int(v)
+                                except ValueError:
+                                    pass
+                    conn.sendall(b'$ACK\n')
+                elif line in ('$SAVE', '$LOAD', '$RST'):
+                    conn.sendall(b'$ACK\n')
+            except OSError:
+                pass
+
+
+def run_bridge(walls, x0, y0, h0, n_ticks):
+    """Run simulation with live matplotlib + TCP bridge for dashboard."""
+    bridge = TelemetryBridge()
+    bridge.start()
+
+    sim = dict(x=x0, y=y0, h=h0, v=0.0,
+               steer=0, target_v=0.0,
+               ctrl={'stuck_time': 0, 'turns': 0.0, 'v': 0.0},
+               trail_x=[x0], trail_y=[y0],
+               sensors=[9999]*4,
+               heading=0.0, yaw_rate=0.0,
+               tick=0)
+
+    fig, ax = plt.subplots(figsize=(11, 7))
+    ax.set_aspect('equal')
+    ax.set_xlim(-0.5, 8.5); ax.set_ylim(-0.5, 5.5)
+    ax.set_title("Umbreon Roborace — Bridge mode  (dashboard on port 8023)")
+    ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
+
+    for seg in walls:
+        ax.plot([seg[0], seg[2]], [seg[1], seg[3]], 'k-', lw=2.5)
+
+    trail_line, = ax.plot([], [], 'b-', lw=1, alpha=0.35, label='path')
+    ray_lines   = [ax.plot([], [], '-', color=c, alpha=0.75, lw=1.5,
+                            label=n)[0]
+                   for c, n in zip(SENSOR_COLORS, SENSOR_NAMES)]
+    car_patches = [None, None]
+    info_box    = ax.text(0.015, 0.97, '', transform=ax.transAxes,
+                          va='top', fontsize=8, fontfamily='monospace',
+                          bbox=dict(facecolor='white', alpha=0.7, pad=3))
+    ax.legend(loc='upper right', fontsize=8, ncol=2)
+
+    def _redraw_car():
+        for p in car_patches:
+            if p is not None:
+                p.remove()
+        h = sim['h']
+        cx = sim['x'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.cos(h)
+        cy = sim['y'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.sin(h)
+        rect = mpatches.FancyBboxPatch(
+            (-CAR_LENGTH / 2, -TRACK_WIDTH / 2), CAR_LENGTH, TRACK_WIDTH,
+            boxstyle="round,pad=0.005",
+            facecolor='steelblue', alpha=0.6, edgecolor='navy', lw=1.2, zorder=5)
+        t = matplotlib.transforms.Affine2D().rotate(h).translate(cx, cy) + ax.transData
+        rect.set_transform(t)
+        ax.add_patch(rect)
+        car_patches[0] = rect
+        fx = sim['x'] + (WHEELBASE + FRONT_OH) * np.cos(h)
+        fy = sim['y'] + (WHEELBASE + FRONT_OH) * np.sin(h)
+        arr = mpatches.FancyArrow(
+            fx, fy, 0.04 * np.cos(h), 0.04 * np.sin(h),
+            width=0.02, head_width=0.04,
+            color='navy', zorder=7, length_includes_head=True)
+        ax.add_patch(arr)
+        car_patches[1] = arr
+
+    def frame(_):
+        s = sense(sim['x'], sim['y'], sim['h'], walls)
+        sim['sensors']      = s
+        sim['ctrl']['v']    = sim['v']
+        steer, tgt_v        = work(sim['ctrl'], s)
+        sim['steer']        = steer
+        sim['target_v']     = tgt_v
+
+        # Compute simulated IMU values
+        dt = LOOP_MS / 1000.0
+        norm = np.clip(steer / 1000.0, -1, 1)
+        sa = -norm * MAX_STR_RAD
+        if abs(sim['v']) > 0.01 and abs(sa) > 1e-4:
+            omega = sim['v'] / (WHEELBASE / np.tan(sa))
+        else:
+            omega = 0.0
+        sim['yaw_rate'] = np.degrees(omega)
+        sim['heading'] += sim['yaw_rate'] * dt
+
+        for _ in range(CTRL_STEPS):
+            sim['x'], sim['y'], sim['h'], sim['v'] = step_physics(
+                sim['x'], sim['y'], sim['h'], sim['v'], steer, tgt_v)
+
+        sim['trail_x'].append(sim['x'])
+        sim['trail_y'].append(sim['y'])
+        sim['tick'] += 1
+
+        # Send to dashboard
+        ms = int(sim['tick'] * LOOP_MS)
+        bridge.send_telemetry(
+            ms, s, steer, sim['v'], tgt_v,
+            sim['yaw_rate'], sim['heading'])
+
+        # Graphics
+        trail_line.set_data(sim['trail_x'][-800:], sim['trail_y'][-800:])
+        _redraw_car()
+
+        ch, sh = np.cos(sim['h']), np.sin(sim['h'])
+        perp = sim['h'] + np.pi / 2
+        cp, sp = np.cos(perp), np.sin(perp)
+        for i, (deg, lat, rl) in enumerate(zip(SENSOR_DEG, SENSOR_LAT_M, ray_lines)):
+            ox = sim['x'] + SENSOR_FWD_M * ch + lat * cp
+            oy = sim['y'] + SENSOR_FWD_M * sh + lat * sp
+            ang = sim['h'] + np.radians(deg)
+            d   = min(s[i] / 1000.0, MAX_LIDAR_M)
+            rl.set_data([ox, ox + d * np.cos(ang)],
+                        [oy, oy + d * np.sin(ang)])
+
+        info_box.set_text(
+            f"v = {sim['v']:.2f} m/s    steer = {sim['steer']:+5d}\n"
+            f"Lo={s[0]/10:5.0f}cm  Lf={s[1]/10:5.0f}cm  "
+            f"Rf={s[2]/10:5.0f}cm  Ro={s[3]/10:5.0f}cm\n"
+            f"stuck = {sim['ctrl']['stuck_time']:2d}    "
+            f"turns = {sim['ctrl']['turns']:+6.1f}    "
+            f"yaw = {sim['yaw_rate']:+6.1f}°/s")
+
+        return [trail_line, *ray_lines, info_box]
+
+    ani = FuncAnimation(fig, frame, interval=LOOP_MS, blit=False,
+                        cache_frame_data=False)
+    plt.tight_layout()
+    plt.show()
+
+
 # ─── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Umbreon roborace simulator")
-    parser.add_argument("--fast",  action="store_true",
+    parser.add_argument("--fast",   action="store_true",
                         help="Pre-compute and plot (no animation)")
-    parser.add_argument("--ticks", type=int, default=1500,
+    parser.add_argument("--bridge", action="store_true",
+                        help="Run sim + TCP bridge for dashboard testing")
+    parser.add_argument("--ticks",  type=int, default=1500,
                         help="Control ticks for --fast mode (default 1500 = 60 s)")
     args = parser.parse_args()
 
@@ -428,5 +659,7 @@ if __name__ == "__main__":
 
     if args.fast:
         run_fast(walls, x0, y0, h0, args.ticks)
+    elif args.bridge:
+        run_bridge(walls, x0, y0, h0, args.ticks)
     else:
         run_live(walls, x0, y0, h0)

@@ -109,6 +109,10 @@ def encode_status() -> str:
 def encode_test(name: str) -> str:
     return f"$TEST:{name}\n"
 
+def encode_drv(steer: int, speed: float) -> str:
+    """Encode a $DRV manual drive command (fire-and-forget, no response)."""
+    return f"$DRV:{steer},{speed:.2f}\n"
+
 
 # ─── Response parsing ────────────────────────────────────────────────────────
 

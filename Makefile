@@ -63,6 +63,23 @@ else
 	$(CLI) compile -b $(FQBN) . --upload -p $(SERIAL)
 endif
 
+# ─── ROS2 (Docker) ───────────────────────────────────────────────────────
+.PHONY: ros2-build
+ros2-build:  ## Build ROS2 Docker image
+	cd ros2 && docker compose build
+
+.PHONY: ros2-run
+ros2-run:  ## Run ROS2 bridge (connects to car at 192.168.4.1:23)
+	cd ros2 && docker compose up umbreon-bridge
+
+.PHONY: ros2-sim
+ros2-sim:  ## Run ROS2 bridge against simulator (localhost:8023)
+	cd ros2 && docker compose --profile sim up umbreon-bridge-sim
+
+.PHONY: ros2-shell
+ros2-shell:  ## Open a shell in the ROS2 container
+	cd ros2 && docker compose run --rm umbreon-bridge bash
+
 # ─── Helpers ──────────────────────────────────────────────────────────────
 .PHONY: clean
 clean:  ## Remove Python caches

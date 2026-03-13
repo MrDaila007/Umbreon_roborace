@@ -74,8 +74,16 @@ float cfg_wrong_dir_deg = 120.0f;
 bool  cfg_race_cw       = true;
 int   cfg_stuck_thresh  = 25;
 
+// ─── Start/Stop control ────────────────────────────────────────────────────
+// #define COMPETITION_MODE     // uncomment to start driving immediately
+#ifdef COMPETITION_MODE
+bool car_running = true;
+#else
+bool car_running = false;
+#endif
+
 #include "luna_car.h"
-// #include "tests.h"   // uncomment for bench testing; remove for competition
+#include "tests.h"      // hardware tests + WiFi remote tests
 
 #include <EEPROM.h>
 
@@ -345,13 +353,431 @@ static void cmd_rst() {
     Serial1.println("$ACK");
 }
 
+// ─── WiFi remote tests ──────────────────────────────────────────────────
+
+static bool wifi_check_abort() {
+    if (Serial1.available() > 0 && Serial1.peek() == '$')
+        return true;
+    return false;
+}
+
+static void wifi_test_lidar() {
+    unsigned long start = millis();
+    while ((millis() - start) < 5000) {
+        if (wifi_check_abort()) break;
+        car.poll_lidars();
+        int* s = car.read_sensors();
+        Serial1.print("$T:LIDAR,L="); Serial1.print(s[0]);
+        Serial1.print(",FL=");        Serial1.print(s[1]);
+        Serial1.print(",FR=");        Serial1.print(s[2]);
+        Serial1.print(",R=");         Serial1.print(s[3]);
+        Serial1.println();
+        delay(100);
+    }
+    Serial1.println("$TDONE:lidar");
+}
+
+static void wifi_test_servo() {
+    Serial1.println("$T:SERVO,phase=left");
+    car.write_steer(-1000); delay(800);
+    if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
+
+    Serial1.println("$T:SERVO,phase=right");
+    car.write_steer(1000); delay(800);
+    if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
+
+    Serial1.println("$T:SERVO,phase=center");
+    car.write_steer(0); delay(400);
+
+    Serial1.println("$T:SERVO,phase=sweep");
+    for (int i = -100; i <= 100; i++) {
+        car.write_steer(i * 10);
+        delay(8);
+        if (wifi_check_abort()) break;
+    }
+    for (int i = 100; i >= -100; i--) {
+        car.write_steer(i * 10);
+        delay(8);
+        if (wifi_check_abort()) break;
+    }
+    car.write_steer(0);
+    Serial1.println("$TDONE:servo");
+}
+
+static void wifi_test_taho() {
+    noInterrupts();
+    _taho_count = 0;
+    _taho_last  = micros();
+    _taho_iv    = 0;
+    interrupts();
+
+    unsigned long start = millis();
+    while ((millis() - start) < 5000) {
+        if (wifi_check_abort()) break;
+        car.poll_lidars();
+
+        noInterrupts();
+        unsigned long cnt = _taho_count;
+        unsigned long iv  = _taho_iv;
+        interrupts();
+
+        bool stopped = (micros() - _taho_last) > 500000UL;
+        float speed_ms = stopped ? 0.0f : get_speed();
+
+        Serial1.print("$T:TAHO,pulses=");   Serial1.print(cnt);
+        Serial1.print(",interval=");         Serial1.print(iv);
+        Serial1.print(",speed=");            Serial1.print(speed_ms, 2);
+        Serial1.print(",state=");            Serial1.print(stopped ? "stopped" : "spinning");
+        Serial1.println();
+        delay(150);
+    }
+    Serial1.println("$TDONE:taho");
+}
+
+static void wifi_test_esc() {
+    Serial1.println("$T:ESC,phase=arm");
+    car.write_speed(0);
+    delay(2000);
+
+    noInterrupts();
+    _taho_count = 0;
+    _taho_last  = micros();
+    _taho_iv    = 0;
+    interrupts();
+
+    Serial1.println("$T:ESC,phase=run");
+    car.motor_esc.write(cfg_min_speed);
+
+    unsigned long esc_start = millis();
+    while ((millis() - esc_start) < 2000) {
+        if (wifi_check_abort()) break;
+        car.poll_lidars();
+
+        noInterrupts();
+        unsigned long cnt = _taho_count;
+        interrupts();
+
+        bool stopped = (micros() - _taho_last) > 500000UL;
+        float speed_ms = stopped ? 0.0f : get_speed();
+        float revs = (float)cnt / (float)cfg_encoder_holes;
+
+        Serial1.print("$T:ESC,pulses=");  Serial1.print(cnt);
+        Serial1.print(",revs=");           Serial1.print(revs, 1);
+        Serial1.print(",speed=");          Serial1.print(speed_ms, 2);
+        Serial1.println();
+        delay(100);
+    }
+
+    car.write_speed(0);
+    delay(500);
+
+    noInterrupts();
+    unsigned long final_cnt = _taho_count;
+    interrupts();
+
+    Serial1.print("$T:ESC,phase=done,total_pulses=");  Serial1.print(final_cnt);
+    Serial1.print(",total_revs=");                      Serial1.print((float)final_cnt / cfg_encoder_holes, 1);
+    Serial1.println();
+    Serial1.println("$TDONE:esc");
+}
+
+static void wifi_test_speed() {
+    float target = 1.5f;
+
+    Serial1.println("$T:SPEED,phase=arm");
+    car.write_speed(0);
+    delay(2000);
+
+    car.pid_integral   = 0;
+    car.pid_prev_error = 0;
+    car.pid_filtered   = 0;
+    car.pid_prev_cnt   = 0;
+    car.pid_prev_ms    = 0;
+
+    noInterrupts();
+    _taho_count = 0;
+    _taho_last  = micros();
+    _taho_iv    = 0;
+    interrupts();
+
+    Serial1.println("$T:SPEED,phase=run");
+    car.write_speed_ms(target);
+    unsigned long prev_ms = millis();
+    unsigned long start   = millis();
+
+    while ((millis() - start) < 10000) {
+        if (wifi_check_abort()) break;
+        car.poll_lidars();
+
+        unsigned long now_ms = millis();
+        if (now_ms - prev_ms < 80) continue;
+        prev_ms = now_ms;
+
+        car.pid_control_motor();
+
+        Serial1.print("$T:SPEED,target=");   Serial1.print(target, 2);
+        Serial1.print(",actual=");            Serial1.print(get_speed(), 2);
+        Serial1.print(",filtered=");          Serial1.print(car.pid_filtered, 2);
+        Serial1.println();
+    }
+
+    car.write_speed(0);
+    car.write_speed_ms(0);
+    Serial1.println("$TDONE:speed");
+}
+
+static void wifi_test_autotune() {
+    const float TARGET     = 1.5f;
+    const int   RELAY_D    = 2;
+    const float HYST       = 0.10f;
+    const int   BASE_ESC   = cfg_min_speed + 2;
+    const int   SKIP_HALF  = 4;
+    const int   NEED_HALF  = 12;
+    const unsigned long TIMEOUT = 40000;
+
+    Serial1.println("$T:TUNE,phase=arm");
+    car.write_speed(0);
+    delay(2000);
+
+    noInterrupts();
+    _taho_count = 0; _taho_last = micros(); _taho_iv = 0;
+    interrupts();
+
+    Serial1.println("$T:TUNE,phase=relay");
+
+    bool relay_high = true;
+    float filtered = 0;
+    float speed_peak = 0, speed_trough = 999.0f;
+    unsigned long prev_cnt = 0, prev_ms = millis(), start_ms = prev_ms;
+    int half_cycle = 0;
+
+    const int MAXM = 16;
+    float meas_peaks[MAXM], meas_troughs[MAXM];
+    unsigned long sw_times[MAXM * 2];
+    int np = 0, nt = 0, nsw = 0;
+
+    int esc_val = constrain(BASE_ESC + RELAY_D, NEUTRAL_SPEED, cfg_max_speed);
+    car.motor_esc.write(esc_val);
+
+    while (millis() - start_ms < TIMEOUT) {
+        car.poll_lidars();
+        if (wifi_check_abort()) break;
+
+        unsigned long now = millis();
+        if (now - prev_ms < 80) continue;
+        float dt = (now - prev_ms) / 1000.0f;
+        prev_ms = now;
+
+        noInterrupts();
+        unsigned long cnt  = _taho_count;
+        unsigned long last = _taho_last;
+        interrupts();
+
+        unsigned long dc = cnt - prev_cnt;
+        prev_cnt = cnt;
+        float raw = (dc / (float)cfg_encoder_holes) *
+                    (3.14159265f * cfg_wheel_diam_m) / dt;
+        filtered = 0.5f * raw + 0.5f * filtered;
+        if ((micros() - last) > 500000UL) filtered = 0;
+
+        if (filtered > speed_peak)   speed_peak   = filtered;
+        if (filtered < speed_trough) speed_trough = filtered;
+
+        float spd_err = filtered - TARGET;
+
+        if (relay_high && spd_err > HYST) {
+            relay_high = false;
+            if (half_cycle >= SKIP_HALF && nt < MAXM)
+                meas_troughs[nt++] = speed_trough;
+            if (half_cycle >= SKIP_HALF && nsw < MAXM * 2)
+                sw_times[nsw++] = now;
+            half_cycle++;
+            speed_peak = filtered;
+            speed_trough = 999.0f;
+        }
+        else if (!relay_high && spd_err < -HYST) {
+            relay_high = true;
+            if (half_cycle >= SKIP_HALF && np < MAXM)
+                meas_peaks[np++] = speed_peak;
+            if (half_cycle >= SKIP_HALF && nsw < MAXM * 2)
+                sw_times[nsw++] = now;
+            half_cycle++;
+            speed_trough = filtered;
+            speed_peak = 0;
+        }
+
+        esc_val = relay_high ? (BASE_ESC + RELAY_D) : (BASE_ESC - RELAY_D);
+        esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
+        car.motor_esc.write(esc_val);
+
+        Serial1.print("$T:TUNE,speed="); Serial1.print(filtered, 2);
+        Serial1.print(",relay=");         Serial1.print(relay_high ? 1 : 0);
+        Serial1.print(",half=");          Serial1.print(half_cycle);
+        Serial1.println();
+
+        if (half_cycle >= SKIP_HALF + NEED_HALF) break;
+    }
+
+    car.write_speed(0);
+    delay(500);
+
+    if (np < 2 || nt < 2 || nsw < 4) {
+        Serial1.println("$T:TUNE,phase=error,msg=not_enough_data");
+        Serial1.println("$TDONE:autotune");
+        return;
+    }
+
+    float avg_peak = 0, avg_trough = 0;
+    for (int i = 0; i < np; i++) avg_peak   += meas_peaks[i];
+    for (int i = 0; i < nt; i++) avg_trough += meas_troughs[i];
+    avg_peak   /= np;
+    avg_trough /= nt;
+
+    float amplitude = (avg_peak - avg_trough) / 2.0f;
+
+    float sum_period = 0;
+    int n_periods = 0;
+    for (int i = 0; i + 2 < nsw; i++) {
+        sum_period += (sw_times[i + 2] - sw_times[i]) / 1000.0f;
+        n_periods++;
+    }
+    float Tu = (n_periods > 0) ? sum_period / n_periods : 1.0f;
+    float Ku = 4.0f * RELAY_D / (3.14159f * amplitude);
+
+    // Raw tune parameters
+    Serial1.print("$TR:TUNE,Ku="); Serial1.print(Ku, 2);
+    Serial1.print(",Tu=");          Serial1.print(Tu, 3);
+    Serial1.print(",amp=");         Serial1.print(amplitude, 3);
+    Serial1.println();
+
+    // Ziegler-Nichols
+    float zn_kP = 0.6f * Ku;
+    float zn_kI = zn_kP / (0.5f * Tu);
+    float zn_kD = zn_kP * Tu / 8.0f;
+    Serial1.print("$TR:ZN,KP="); Serial1.print(zn_kP, 2);
+    Serial1.print(",KI=");       Serial1.print(zn_kI, 2);
+    Serial1.print(",KD=");       Serial1.print(zn_kD, 3);
+    Serial1.println();
+
+    // Tyreus-Luyben
+    float tl_kP = Ku / 2.2f;
+    float tl_kI = tl_kP / (2.2f * Tu);
+    float tl_kD = tl_kP * Tu / 6.3f;
+    Serial1.print("$TR:TL,KP="); Serial1.print(tl_kP, 2);
+    Serial1.print(",KI=");       Serial1.print(tl_kI, 2);
+    Serial1.print(",KD=");       Serial1.print(tl_kD, 3);
+    Serial1.println();
+
+    // PI only
+    float pi_kP = 0.45f * Ku;
+    float pi_kI = pi_kP / (0.83f * Tu);
+    Serial1.print("$TR:PI,KP="); Serial1.print(pi_kP, 2);
+    Serial1.print(",KI=");       Serial1.print(pi_kI, 2);
+    Serial1.println(",KD=0.000");
+
+    Serial1.println("$TDONE:autotune");
+}
+
+static void wifi_test_reactive() {
+    const int CLOSE_DIST = 1200;
+    const int FAR_DIST   = 3000;
+
+    unsigned long start = millis();
+    while ((millis() - start) < 30000) {
+        if (wifi_check_abort()) break;
+        car.poll_lidars();
+        int* s = car.read_sensors();
+
+        int L = s[0], FL = s[1], FR = s[2], R = s[3];
+        float diff = (float)(R - L);
+        if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
+        if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+
+        float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
+        int steer_val = (int)(steer_f * 1000.0f);
+        car.write_steer(steer_val);
+
+        Serial1.print("$T:REACT,L="); Serial1.print(L);
+        Serial1.print(",FL=");         Serial1.print(FL);
+        Serial1.print(",FR=");         Serial1.print(FR);
+        Serial1.print(",R=");          Serial1.print(R);
+        Serial1.print(",steer=");      Serial1.print(steer_val);
+        Serial1.println();
+        delay(50);
+    }
+
+    car.write_steer(0);
+    Serial1.println("$TDONE:reactive");
+}
+
+// ─── Start / Stop / Status / Test commands ────────────────────────────────
+
+static void cmd_start() {
+    car.pid_integral   = 0;
+    car.pid_prev_error = 0;
+    car.pid_filtered   = 0;
+    car.pid_prev_ms    = 0;
+#if USE_IMU
+    car.reset_heading();
+#endif
+    Serial1.println("$ACK");
+
+    // 5-second countdown — idle telemetry flows, $STOP aborts
+    unsigned long start_at = millis() + 5000;
+    while (millis() < start_at) {
+        car.poll_lidars();
+        if (wifi_check_abort()) return;
+        send_idle_telemetry();
+        delay(cfg_loop_ms);
+    }
+    car_running = true;
+    Serial1.println("$STS:RUN");
+}
+
+static void cmd_stop() {
+    car_running = false;
+    car.write_speed(0);
+    car.write_steer(0);
+    Serial1.println("$ACK");
+    Serial1.println("$STS:STOP");
+}
+
+static void cmd_status() {
+    Serial1.println(car_running ? "$STS:RUN" : "$STS:STOP");
+}
+
+static void cmd_test(const char* name) {
+    // Auto-stop car before running any test
+    if (car_running) {
+        car_running = false;
+        car.write_speed(0);
+        car.write_steer(0);
+    }
+
+    if      (strcmp(name, "lidar")    == 0) wifi_test_lidar();
+    else if (strcmp(name, "servo")    == 0) wifi_test_servo();
+    else if (strcmp(name, "taho")     == 0) wifi_test_taho();
+    else if (strcmp(name, "esc")      == 0) wifi_test_esc();
+    else if (strcmp(name, "speed")    == 0) wifi_test_speed();
+    else if (strcmp(name, "autotune") == 0) wifi_test_autotune();
+    else if (strcmp(name, "reactive") == 0) wifi_test_reactive();
+    else {
+        Serial1.print("$NAK:unknown_test:");
+        Serial1.println(name);
+    }
+}
+
 static void dispatch_command(const char* line) {
-    if      (strcmp(line, "$PING") == 0) cmd_ping();
-    else if (strcmp(line, "$GET")  == 0) cmd_get();
+    if      (strcmp(line, "$PING")   == 0) cmd_ping();
+    else if (strcmp(line, "$GET")    == 0) cmd_get();
     else if (strncmp(line, "$SET:", 5) == 0) cmd_set(line + 5);
-    else if (strcmp(line, "$SAVE") == 0) cmd_save();
-    else if (strcmp(line, "$LOAD") == 0) cmd_load();
-    else if (strcmp(line, "$RST")  == 0) cmd_rst();
+    else if (strcmp(line, "$SAVE")   == 0) cmd_save();
+    else if (strcmp(line, "$LOAD")   == 0) cmd_load();
+    else if (strcmp(line, "$RST")    == 0) cmd_rst();
+    else if (strcmp(line, "$START")  == 0) cmd_start();
+    else if (strcmp(line, "$STOP")   == 0) cmd_stop();
+    else if (strcmp(line, "$STATUS") == 0) cmd_status();
+    else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     // Unknown commands silently ignored
 }
 
@@ -371,6 +797,28 @@ static void process_commands() {
         }
     }
 }
+static void send_idle_telemetry() {
+    car.poll_lidars();
+#if USE_IMU
+    car.imu_update();
+#endif
+    int* s = car.read_sensors();
+    Serial1.print(millis());              Serial1.print(',');
+    Serial1.print(s[0]);                  Serial1.print(',');
+    Serial1.print(s[1]);                  Serial1.print(',');
+    Serial1.print(s[2]);                  Serial1.print(',');
+    Serial1.print(s[3]);                  Serial1.print(',');
+    Serial1.print(0);                     Serial1.print(',');
+    Serial1.print(get_speed(), 2);        Serial1.print(',');
+    Serial1.print(0.0, 1);
+#if USE_IMU
+    Serial1.print(',');
+    Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
+    Serial1.print(car.heading, 1);
+#endif
+    Serial1.println();
+}
+
 #endif  // USE_WIFI_DEBUG
 
 // ─── Stuck / reverse helpers ──────────────────────────────────────────────────
@@ -570,6 +1018,13 @@ void loop() {
     unsigned long now = millis();
     if (now >= next_loop) {
         next_loop = max(now, next_loop + (unsigned long)cfg_loop_ms);
-        work();
+        if (car_running) {
+            work();
+        }
+#if USE_WIFI_DEBUG
+        else {
+            send_idle_telemetry();
+        }
+#endif
     }
 }

@@ -429,6 +429,8 @@ class TelemetryBridge:
         self.clients = []
         self.lock = threading.Lock()
         self._server = None
+        self._running = False
+        self._start_at = 0
         self._cfg = dict(
             FOD=FRONT_OBSTACLE_DIST, SOD=SIDE_OPEN_DIST,
             ACD=ALL_CLOSE_DIST, CFD=CLOSE_FRONT_DIST,
@@ -521,6 +523,17 @@ class TelemetryBridge:
                     conn.sendall(b'$ACK\n')
                 elif line in ('$SAVE', '$LOAD', '$RST'):
                     conn.sendall(b'$ACK\n')
+                elif line == '$START':
+                    self._start_at = time.time() + 5
+                    conn.sendall(b'$ACK\n')
+                elif line == '$STOP':
+                    self._running = False
+                    self._start_at = 0
+                    conn.sendall(b'$ACK\n$STS:STOP\n')
+                elif line == '$STATUS':
+                    conn.sendall(b'$STS:RUN\n' if self._running else b'$STS:STOP\n')
+                elif line.startswith('$TEST:'):
+                    conn.sendall(b'$NAK:sim_mode\n')
             except OSError:
                 pass
 
@@ -581,10 +594,33 @@ def run_bridge(walls, x0, y0, h0, headless=False):
 
     if headless:
         print("  Headless mode -- Ctrl+C to stop")
+        print("  Waiting for $START command...")
         try:
             while True:
-                s, steer, tgt_v = _bridge_step(sim, walls)
-                _send(s, steer, tgt_v)
+                # Check pending start countdown
+                if bridge._start_at > 0 and time.time() >= bridge._start_at:
+                    bridge._running = True
+                    bridge._start_at = 0
+                    print("  Car started!")
+                    with bridge.lock:
+                        for c in bridge.clients:
+                            try:
+                                c.sendall(b'$STS:RUN\n')
+                            except OSError:
+                                pass
+
+                if bridge._running:
+                    s, steer, tgt_v = _bridge_step(sim, walls)
+                    _send(s, steer, tgt_v)
+                else:
+                    sim['v'] = 0.0
+                    sim['steer'] = 0
+                    s = sense(sim['x'], sim['y'], sim['h'], walls)
+                    sim['sensors'] = s
+                    sim['tick'] += 1
+                    ms = int(sim['tick'] * LOOP_MS)
+                    bridge.send_telemetry(ms, s, 0, 0.0, 0.0,
+                                          0.0, sim['heading'])
                 time.sleep(LOOP_MS / 1000.0)
         except KeyboardInterrupt:
             print("\n  Bridge stopped.")
@@ -635,7 +671,27 @@ def run_bridge(walls, x0, y0, h0, headless=False):
         car_patches[1] = arr
 
     def frame(_):
-        s, steer, tgt_v = _bridge_step(sim, walls)
+        # Check pending start countdown
+        if bridge._start_at > 0 and time.time() >= bridge._start_at:
+            bridge._running = True
+            bridge._start_at = 0
+            with bridge.lock:
+                for c in bridge.clients:
+                    try:
+                        c.sendall(b'$STS:RUN\n')
+                    except OSError:
+                        pass
+
+        if bridge._running:
+            s, steer, tgt_v = _bridge_step(sim, walls)
+        else:
+            sim['v'] = 0.0
+            sim['steer'] = 0
+            s = sense(sim['x'], sim['y'], sim['h'], walls)
+            sim['sensors'] = s
+            sim['tick'] += 1
+            steer = 0
+            tgt_v = 0.0
         _send(s, steer, tgt_v)
 
         trail_line.set_data(sim['trail_x'][-800:], sim['trail_y'][-800:])

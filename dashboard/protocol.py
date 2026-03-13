@@ -97,6 +97,18 @@ def encode_load() -> str:
 def encode_reset() -> str:
     return "$RST\n"
 
+def encode_start() -> str:
+    return "$START\n"
+
+def encode_stop() -> str:
+    return "$STOP\n"
+
+def encode_status() -> str:
+    return "$STATUS\n"
+
+def encode_test(name: str) -> str:
+    return f"$TEST:{name}\n"
+
 
 # ─── Response parsing ────────────────────────────────────────────────────────
 
@@ -129,5 +141,25 @@ def parse_response(line: str) -> dict:
                 except ValueError:
                     params[k] = v
         return {"type": "cfg", "params": params}
+    elif line.startswith("$STS:"):
+        state = line[5:]
+        return {"type": "car_status", "running": state == "RUN"}
+    elif line.startswith("$TDONE:"):
+        return {"type": "test_done", "test": line[7:]}
+    elif line.startswith("$TR:"):
+        parts = line[4:].split(",", 1)
+        method = parts[0]
+        params = {}
+        if len(parts) > 1:
+            for pair in parts[1].split(","):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    try:
+                        params[k] = float(v)
+                    except ValueError:
+                        params[k] = v
+        return {"type": "test_result", "method": method, "params": params}
+    elif line.startswith("$T:"):
+        return {"type": "test_log", "data": line[3:]}
     else:
         return {"type": None, "raw": line}

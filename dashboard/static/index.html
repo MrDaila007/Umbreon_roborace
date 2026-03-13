@@ -39,6 +39,7 @@ body {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; background: #0d0d20;
   border-bottom: 1px solid var(--border); flex-shrink: 0;
+  flex-wrap: wrap;
 }
 .toolbar .logo {
   font-weight: 700; font-size: 15px; letter-spacing: 0.5px;
@@ -75,19 +76,33 @@ body {
   transition: all .15s; color: #fff;
 }
 .btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn:disabled:active { transform: none; }
 .btn-primary { background: var(--accent); }
-.btn-primary:hover { background: var(--accent-h); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-h); }
 .btn-success { background: #16a34a; }
-.btn-success:hover { background: #15803d; }
+.btn-success:hover:not(:disabled) { background: #15803d; }
 .btn-warning { background: #ca8a04; }
-.btn-warning:hover { background: #a16207; }
+.btn-warning:hover:not(:disabled) { background: #a16207; }
 .btn-danger  { background: #dc2626; }
-.btn-danger:hover  { background: #b91c1c; }
+.btn-danger:hover:not(:disabled)  { background: #b91c1c; }
 .btn-ghost {
   background: transparent; border: 1px solid var(--border);
   color: var(--text-m);
 }
-.btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+.btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+
+/* ─── Start/Stop ─────────────────────────────────────────────────────────── */
+.btn-start-stop {
+  padding: 5px 16px; font-size: 13px; font-weight: 700;
+  min-width: 70px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.run-state {
+  font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
+  min-width: 70px;
+}
+.run-state.running { color: var(--success); }
+.run-state.stopped { color: var(--text-d); }
 
 /* ─── Main Layout ─────────────────────────────────────────────────────────── */
 .main {
@@ -173,6 +188,51 @@ body {
   accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer;
 }
 
+/* ─── Test Panel ─────────────────────────────────────────────────────────── */
+.test-panel { border-bottom: 1px solid var(--border); }
+.test-panel-header {
+  padding: 7px 10px; font-size: 11px; font-weight: 600;
+  color: var(--text-m); cursor: pointer; user-select: none;
+  display: flex; align-items: center; justify-content: space-between;
+  text-transform: uppercase; letter-spacing: .3px;
+  transition: background .15s;
+}
+.test-panel-header:hover { background: rgba(99,102,241,.08); }
+.test-panel-header .chevron {
+  transition: transform .2s; font-size: 10px; color: var(--text-d);
+}
+.test-panel.collapsed .chevron { transform: rotate(-90deg); }
+.test-panel.collapsed .test-panel-body { display: none; }
+.test-panel-body { padding: 4px 8px 8px; }
+.test-buttons {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px;
+}
+.test-buttons .btn { flex: 1; min-width: 70px; padding: 5px 4px; font-size: 11px; }
+.test-log {
+  background: #080812; border: 1px solid var(--border); border-radius: 4px;
+  font-family: monospace; font-size: 10px; color: var(--text-d);
+  padding: 4px 6px; max-height: 120px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+  display: none;
+}
+.test-log.active { display: block; }
+.test-abort { display: none; margin-top: 4px; }
+.test-abort.active { display: block; }
+.tune-results { display: none; margin-top: 6px; }
+.tune-results.active { display: block; }
+.tune-results table {
+  width: 100%; border-collapse: collapse; font-size: 11px;
+}
+.tune-results th, .tune-results td {
+  padding: 3px 6px; border: 1px solid var(--border);
+  text-align: right;
+}
+.tune-results th {
+  background: var(--bg-input); color: var(--text-m); font-weight: 600;
+  text-align: center;
+}
+.tune-results .btn { padding: 2px 8px; font-size: 10px; }
+
 /* ─── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -184,6 +244,45 @@ body {
 .toast.ok { background: #16a34a; color: #fff; }
 .toast.err { background: #dc2626; color: #fff; }
 .toast.info { background: var(--accent); color: #fff; }
+
+/* ─── Mobile Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto auto;
+  }
+  .charts-panel { grid-template-columns: 1fr; }
+  .settings-panel {
+    grid-row: auto; grid-column: 1;
+    border-left: none; border-top: 1px solid var(--border);
+    max-height: 50vh; overflow-y: auto;
+  }
+  .map-panel { grid-column: 1; }
+}
+
+@media (max-width: 600px) {
+  .toolbar { padding: 6px 8px; gap: 6px; }
+  .toolbar .logo { font-size: 13px; }
+  .toolbar input[type="text"] { font-size: 11px; padding: 3px 6px; }
+  .toolbar .host-input { width: 90px; }
+  .toolbar .port-input { width: 40px; }
+  .btn { padding: 4px 8px; font-size: 11px; }
+  .chart-card .chart-title { font-size: 10px; }
+  .chart-card .legend-item { font-size: 9px; }
+  .setting-row label { font-size: 10px; }
+  .setting-row input[type="number"] { width: 60px; font-size: 11px; }
+}
+
+@media (pointer: coarse) {
+  .btn { min-height: 40px; padding: 8px 12px; }
+  .btn-start-stop { min-height: 44px; padding: 8px 20px; font-size: 15px; }
+  .setting-row input[type="number"], .setting-row input[type="text"] {
+    min-height: 36px; font-size: 14px; padding: 6px 8px;
+  }
+  .setting-row input[type="checkbox"] { width: 20px; height: 20px; }
+  .settings-group-header { padding: 10px; }
+  .test-buttons .btn { min-height: 40px; }
+}
 </style>
 </head>
 <body>
@@ -202,6 +301,9 @@ body {
   <div class="sep"></div>
   <button class="btn btn-ghost" id="btn-ping">Ping</button>
   <button class="btn btn-ghost" id="btn-record">Record</button>
+  <div class="sep"></div>
+  <button class="btn btn-success btn-start-stop" id="btn-start" disabled>Start</button>
+  <span class="run-state" id="run-state"></span>
   <div class="spacer"></div>
   <span class="frame-count" id="frame-count">Frames: 0</span>
 </div>
@@ -267,6 +369,34 @@ body {
       <button class="btn btn-ghost" id="btn-save-file">Save File</button>
       <button class="btn btn-warning" id="btn-load-ee">Load EE</button>
     </div>
+    <!-- Test Panel -->
+    <div class="test-panel" id="test-panel">
+      <div class="test-panel-header" id="test-panel-toggle">
+        <span>Hardware Tests</span>
+        <span class="chevron">&#9660;</span>
+      </div>
+      <div class="test-panel-body">
+        <div class="test-buttons">
+          <button class="btn btn-ghost" data-test="lidar">LiDAR</button>
+          <button class="btn btn-ghost" data-test="servo">Servo</button>
+          <button class="btn btn-ghost" data-test="taho">Tacho</button>
+          <button class="btn btn-ghost" data-test="esc">ESC</button>
+          <button class="btn btn-ghost" data-test="speed">Speed Hold</button>
+          <button class="btn btn-ghost" data-test="autotune">Auto-Tune</button>
+          <button class="btn btn-ghost" data-test="reactive">Reactive</button>
+        </div>
+        <button class="btn btn-danger test-abort" id="btn-test-abort">Abort Test</button>
+        <div class="test-log" id="test-log"></div>
+        <div class="tune-results" id="tune-results">
+          <table>
+            <thead>
+              <tr><th>Method</th><th>KP</th><th>KI</th><th>KD</th><th></th></tr>
+            </thead>
+            <tbody id="tune-results-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <div id="settings-groups"></div>
   </div>
 
@@ -313,6 +443,8 @@ let ws = null;
 let carConnected = false;
 let config = null;  // received from server
 let frameCount = 0;
+let carRunning = false;
+let testRunning = false;
 
 function wsConnect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -333,10 +465,20 @@ function wsSend(data) {
 
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'status':
+    case 'status': {
+      const wasConnected = carConnected;
       carConnected = msg.connected;
       updateStatusUI();
+      if (!wasConnected && carConnected) {
+        wsSend({ action: 'command', cmd: '$STATUS' });
+      }
+      if (!carConnected) {
+        carRunning = false;
+        testRunning = false;
+        updateStatusUI();
+      }
       break;
+    }
     case 'config':
       config = msg;
       buildSettingsPanel();
@@ -359,12 +501,37 @@ const statusDot  = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const btnConnect = document.getElementById('btn-connect');
 const frameLbl   = document.getElementById('frame-count');
+const btnStart   = document.getElementById('btn-start');
+const runStateEl = document.getElementById('run-state');
 
 function updateStatusUI() {
   statusDot.classList.toggle('on', carConnected);
   statusText.textContent = carConnected ? 'Connected' : 'Disconnected';
   btnConnect.textContent = carConnected ? 'Disconnect' : 'Connect';
   btnConnect.className   = carConnected ? 'btn btn-danger' : 'btn btn-primary';
+
+  // Start/Stop button
+  btnStart.disabled = !carConnected;
+  if (carRunning) {
+    btnStart.textContent = 'STOP';
+    btnStart.className = 'btn btn-danger btn-start-stop';
+  } else {
+    btnStart.textContent = 'Start';
+    btnStart.className = 'btn btn-success btn-start-stop';
+  }
+  if (!carConnected) btnStart.disabled = true;
+
+  // Run state label
+  if (!carConnected) {
+    runStateEl.textContent = '';
+    runStateEl.className = 'run-state';
+  } else if (carRunning) {
+    runStateEl.textContent = 'RUNNING';
+    runStateEl.className = 'run-state running';
+  } else {
+    runStateEl.textContent = 'STOPPED';
+    runStateEl.className = 'run-state stopped';
+  }
 }
 
 // ─── Toolbar Actions ─────────────────────────────────────────────────────
@@ -382,6 +549,14 @@ btnConnect.addEventListener('click', () => {
 
 document.getElementById('btn-ping').addEventListener('click', () => {
   wsSend({ action: 'command', cmd: '$PING' });
+});
+
+btnStart.addEventListener('click', () => {
+  if (carRunning) {
+    wsSend({ action: 'command', cmd: '$STOP' });
+  } else {
+    wsSend({ action: 'command', cmd: '$START' });
+  }
 });
 
 // Recording
@@ -718,6 +893,19 @@ function onResponse(resp) {
     applySettings(resp.params);
     toast('Settings loaded from car', 'ok');
   }
+  else if (resp.type === 'car_status') {
+    carRunning = resp.running;
+    updateStatusUI();
+  }
+  else if (resp.type === 'test_log') {
+    appendTestLog(resp.data);
+  }
+  else if (resp.type === 'test_result') {
+    onTestResult(resp.method, resp.params);
+  }
+  else if (resp.type === 'test_done') {
+    onTestDone(resp.test);
+  }
 }
 
 // ─── Settings Panel ──────────────────────────────────────────────────────
@@ -851,6 +1039,90 @@ document.getElementById('file-input').addEventListener('change', (e) => {
   reader.readAsText(f);
   e.target.value = '';
 });
+
+// ─── Test Panel ──────────────────────────────────────────────────────────
+const MOTOR_TESTS = ['esc', 'speed', 'autotune'];
+
+document.getElementById('test-panel-toggle').addEventListener('click', () => {
+  document.getElementById('test-panel').classList.toggle('collapsed');
+});
+
+document.querySelectorAll('[data-test]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const name = btn.dataset.test;
+    if (!carConnected) { toast('Not connected', 'err'); return; }
+    if (testRunning) { toast('Test already running', 'err'); return; }
+    if (MOTOR_TESTS.includes(name)) {
+      if (!confirm('This test will spin the motor. Continue?')) return;
+    }
+    startTest(name);
+  });
+});
+
+document.getElementById('btn-test-abort').addEventListener('click', () => {
+  wsSend({ action: 'command', cmd: '$STOP' });
+  onTestDone('aborted');
+});
+
+function startTest(name) {
+  testRunning = true;
+  const log = document.getElementById('test-log');
+  log.textContent = '';
+  log.classList.add('active');
+  document.getElementById('btn-test-abort').classList.add('active');
+  document.getElementById('tune-results').classList.remove('active');
+  document.getElementById('tune-results-body').innerHTML = '';
+  wsSend({ action: 'command', cmd: `$TEST:${name}` });
+  // Test auto-stops the car
+  carRunning = false;
+  updateStatusUI();
+}
+
+function appendTestLog(data) {
+  const log = document.getElementById('test-log');
+  log.textContent += data + '\n';
+  log.scrollTop = log.scrollHeight;
+}
+
+function onTestResult(method, params) {
+  if (method === 'TUNE') {
+    appendTestLog(`Ku=${params.Ku}, Tu=${params.Tu}, amp=${params.amp}`);
+    return;
+  }
+  // ZN, TL, PI results
+  const container = document.getElementById('tune-results');
+  container.classList.add('active');
+  const tbody = document.getElementById('tune-results-body');
+  const tr = document.createElement('tr');
+  const kp = params.KP || 0;
+  const ki = params.KI || 0;
+  const kd = params.KD || 0;
+  tr.innerHTML =
+    `<td style="text-align:left;font-weight:600">${method}</td>` +
+    `<td>${kp.toFixed(2)}</td>` +
+    `<td>${ki.toFixed(2)}</td>` +
+    `<td>${kd.toFixed(3)}</td>` +
+    `<td><button class="btn btn-primary" data-tune-kp="${kp}" data-tune-ki="${ki}" data-tune-kd="${kd}">Apply</button></td>`;
+  tbody.appendChild(tr);
+  // Bind apply button
+  tr.querySelector('button').addEventListener('click', function() {
+    const kpv = parseFloat(this.dataset.tuneKp);
+    const kiv = parseFloat(this.dataset.tuneKi);
+    const kdv = parseFloat(this.dataset.tuneKd);
+    wsSend({ action: 'command', cmd: `$SET:KP=${kpv.toFixed(2)},KI=${kiv.toFixed(2)},KD=${kdv.toFixed(3)}` });
+    applySettings({ KP: kpv, KI: kiv, KD: kdv });
+    toast('PID gains applied', 'ok');
+  });
+}
+
+function onTestDone(name) {
+  testRunning = false;
+  document.getElementById('btn-test-abort').classList.remove('active');
+  appendTestLog(`--- Test ${name} complete ---`);
+  if (carConnected) {
+    wsSend({ action: 'command', cmd: '$STATUS' });
+  }
+}
 
 // ─── Render Loop ─────────────────────────────────────────────────────────
 function renderLoop() {

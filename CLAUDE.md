@@ -32,16 +32,27 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - arduino-cli is bundled with Arduino IDE at `%LOCALAPPDATA%\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli`
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
 - WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
+- WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
 
-There is no automated linting or test suite. Diagnostics are in `tests.h` (sensor readouts, servo wiggle, speed ramps).
+## Linting & CI
+
+CI runs on push/PR via `.github/workflows/ci.yml`:
+- **Python lint**: `ruff check dashboard/ simulation/` (config in `ruff.toml`)
+- **C++ static analysis**: `cppcheck` on firmware files
+- **Firmware compile**: arduino-cli build for `rp2040:rp2040:rpipico2`
+- **Python imports**: verifies all dashboard/sim modules import cleanly
+- **ROS2 build**: Docker image build with colcon
+
+No automated test suite — diagnostics are in `tests.h` (7 WiFi-accessible hardware tests: lidar, servo, taho, esc, speed, autotune, reactive).
 
 ## Architecture
 
 ### Three-layer system
 
 ```
-Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──TCP:23──▶ Dashboard / Simulator
-   (C++)                    (ESP8266)                          (Python + Web)
+Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
+   (C++)            GP17 TX → RX    (ESP8266)           ├─ HTTP:80 ─▶ Built-in Web UI (phone)
+                    GP16 RX ← TX                        └─ WS:81 ──▶ Built-in Web UI (real-time)
 ```
 
 ### Firmware (`Umbreon_roborace.ino` + `luna_car.h`)
@@ -55,15 +66,19 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──TCP:23─�
 - ESC: forward [96–110], reverse [0–85], neutral 90 (PWM angle)
 - 25 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
 
-### WiFi Bridge (`wifi_debug/wifi_debug.ino`) — Wemos D1 Mini
+### WiFi Bridge (`wifi_debug/wifi_debug.ino` + `web_ui.h`) — Wemos D1 Mini
 
-- Creates AP "Umbreon" (password `12345678`), TCP server on port 23
-- Transparent bidirectional UART ↔ TCP relay
+- Creates AP "Umbreon" (password `12345678`)
+- **Port 80**: HTTP server — built-in web dashboard (`web_ui.h` PROGMEM), open `http://192.168.4.1` from phone/laptop
+- **Port 81**: WebSocket server — real-time bidirectional relay for web dashboard
+- **Port 23**: Raw TCP server — backward compat with Python dashboard / ROS2 bridge
+- Line-buffered protocol-aware relay (UART lines broadcast to both TCP and WebSocket)
+- LED status: slow blink (no clients), fast blink (client, no data), solid (data flowing)
 
 ### Dashboard (`dashboard/`)
 
 Two implementations sharing `protocol.py` and `car_config.py`:
-- **Web (recommended)**: `server.py` (aiohttp) bridges WebSocket clients to car's TCP socket. UI in `static/index.html` (vanilla JS, no dependencies).
+- **Web (recommended)**: `server.py` (aiohttp) bridges WebSocket clients to car's TCP socket. UI in `static/index.html` (vanilla JS, canvas charts, track map).
 - **Desktop**: `app.py` (tkinter + matplotlib). Supporting modules: `connection.py`, `telemetry.py`, `plots.py`, `track_map.py`, `settings_panel.py`, `settings_file.py`.
 
 ### Simulator (`simulation/sim.py`)

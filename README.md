@@ -65,6 +65,10 @@ Umbreon_roborace/
 |   |-- architecture.md       Software design overview
 |   |-- dashboard.md          Dashboard & command protocol reference
 |   +-- tuning.md             Tuning guide for all parameters
+|-- ros2/
+|   |-- Dockerfile            ROS2 Humble Docker build
+|   |-- docker-compose.yml    Bridge for car + simulator profiles
+|   +-- src/umbreon_bridge/   ROS2 Python package (bridge node)
 |-- Makefile                  Build/run targets (Linux/macOS)
 +-- make.bat                  Build/run targets (Windows)
 ```
@@ -169,6 +173,34 @@ ASCII commands over WiFi TCP (port 23):
 | `$SAVE` | `$ACK` | Persist to EEPROM |
 | `$LOAD` | `$ACK` | Restore from EEPROM |
 | `$RST` | `$ACK` | Reset to compile-time defaults |
+| `$DRV:<s>,<v>` | *(none)* | Manual drive (steer, speed m/s) — 500ms timeout |
+
+## ROS2 Bridge (Docker)
+
+The ROS2 Humble bridge runs in Docker and publishes Umbreon telemetry as standard ROS2 topics. Requires Docker.
+
+```bash
+# Build the image
+make ros2-build
+
+# Run against the real car (connect to WiFi AP "Umbreon" first)
+make ros2-run
+
+# Run against the simulator
+make bridge              # terminal 1: start sim
+make ros2-sim            # terminal 2: start ROS2 bridge
+
+# Inside the container
+ros2 topic list
+ros2 service call /umbreon/start std_srvs/srv/Trigger
+ros2 topic echo /umbreon/odom
+ros2 topic pub /cmd_vel geometry_msgs/Twist "{linear: {x: 1.0}, angular: {z: 0.3}}"
+```
+
+**Published topics**: `/umbreon/range/*`, `/umbreon/imu`, `/umbreon/odom`, `/umbreon/scan`, `/umbreon/status`
+**Subscribed**: `/cmd_vel` (teleop), `/umbreon/throttle`, `/umbreon/steering`
+**Services**: `/umbreon/{connect,disconnect,ping,start,stop,save,load,reset}`
+**TF**: `odom` → `base_link` → `lidar_*` frames
 
 ## Make Targets
 
@@ -181,6 +213,10 @@ ASCII commands over WiFi TCP (port 23):
 | `make sim` | Run live simulation (matplotlib) |
 | `make sim-fast` | Pre-computed simulation plot |
 | `make clean` | Remove Python caches |
+| `make ros2-build` | Build ROS2 Docker image |
+| `make ros2-run` | Run ROS2 bridge (car) |
+| `make ros2-sim` | Run ROS2 bridge (simulator) |
+| `make ros2-shell` | Open ROS2 container shell |
 
 On Windows, use `make.bat` (same targets).
 

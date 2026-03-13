@@ -82,6 +82,12 @@ bool car_running = true;
 bool car_running = false;
 #endif
 
+// ─── Manual drive mode ($DRV command) ─────────────────────────────────────
+bool manual_mode = false;
+unsigned long last_drv_ms = 0;
+int manual_steer = 0;
+float manual_speed = 0.0f;
+
 #include "luna_car.h"
 #include "tests.h"      // hardware tests + WiFi remote tests
 
@@ -710,6 +716,22 @@ static void wifi_test_reactive() {
     Serial1.println("$TDONE:reactive");
 }
 
+// ─── Manual drive command ─────────────────────────────────────────────────
+
+static void cmd_drv(const char* args) {
+    // Parse "$DRV:<steer>,<speed>" — fire-and-forget (no response)
+    char buf[32];
+    strncpy(buf, args, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char* comma = strchr(buf, ',');
+    if (!comma) return;
+    *comma = '\0';
+    manual_steer = atoi(buf);
+    manual_speed = atof(comma + 1);
+    manual_mode = true;
+    last_drv_ms = millis();
+}
+
 // ─── Start / Stop / Status / Test commands ────────────────────────────────
 
 static void cmd_start() {
@@ -778,6 +800,7 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$STOP")   == 0) cmd_stop();
     else if (strcmp(line, "$STATUS") == 0) cmd_status();
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
+    else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
     // Unknown commands silently ignored
 }
 
@@ -1019,7 +1042,36 @@ void loop() {
     if (now >= next_loop) {
         next_loop = max(now, next_loop + (unsigned long)cfg_loop_ms);
         if (car_running) {
-            work();
+            if (manual_mode && (millis() - last_drv_ms < 500)) {
+                // Manual drive mode — apply $DRV commands directly
+                car.poll_lidars();
+#if USE_IMU
+                car.imu_update();
+#endif
+                int* s = car.read_sensors();
+                car.write_steer(manual_steer);
+                car.write_speed_ms(manual_speed);
+                car.pid_control_motor();
+#if USE_WIFI_DEBUG
+                Serial1.print(millis());              Serial1.print(',');
+                Serial1.print(s[0]);                  Serial1.print(',');
+                Serial1.print(s[1]);                  Serial1.print(',');
+                Serial1.print(s[2]);                  Serial1.print(',');
+                Serial1.print(s[3]);                  Serial1.print(',');
+                Serial1.print(manual_steer);          Serial1.print(',');
+                Serial1.print(get_speed(), 2);        Serial1.print(',');
+                Serial1.print(manual_speed, 1);
+#if USE_IMU
+                Serial1.print(',');
+                Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
+                Serial1.print(car.heading, 1);
+#endif
+                Serial1.println();
+#endif
+            } else {
+                manual_mode = false;
+                work();
+            }
         }
 #if USE_WIFI_DEBUG
         else {

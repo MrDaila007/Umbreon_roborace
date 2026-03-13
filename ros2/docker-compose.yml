@@ -1,0 +1,28 @@
+services:
+  umbreon-bridge:
+    build:
+      context: ..
+      dockerfile: ros2/Dockerfile
+    network_mode: host
+    command: >
+      bash -c "
+        . /opt/ros/humble/setup.sh &&
+        . /ros2_ws/install/setup.sh &&
+        ros2 run umbreon_bridge bridge_node
+          --ros-args -p host:=192.168.4.1 -p port:=23
+      "
+
+  umbreon-bridge-sim:
+    build:
+      context: ..
+      dockerfile: ros2/Dockerfile
+    network_mode: host
+    profiles:
+      - sim
+    command: >
+      bash -c "
+        . /opt/ros/humble/setup.sh &&
+        . /ros2_ws/install/setup.sh &&
+        ros2 run umbreon_bridge bridge_node
+          --ros-args -p host:=127.0.0.1 -p port:=8023
+      "

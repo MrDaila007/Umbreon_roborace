@@ -431,6 +431,10 @@ class TelemetryBridge:
         self._server = None
         self._running = False
         self._start_at = 0
+        self._manual_mode = False
+        self._manual_steer = 0
+        self._manual_speed = 0.0
+        self._manual_last = 0.0
         self._cfg = dict(
             FOD=FRONT_OBSTACLE_DIST, SOD=SIDE_OPEN_DIST,
             ACD=ALL_CLOSE_DIST, CFD=CLOSE_FRONT_DIST,
@@ -534,16 +538,36 @@ class TelemetryBridge:
                     conn.sendall(b'$STS:RUN\n' if self._running else b'$STS:STOP\n')
                 elif line.startswith('$TEST:'):
                     conn.sendall(b'$NAK:sim_mode\n')
+                elif line.startswith('$DRV:'):
+                    parts = line[5:].split(',', 1)
+                    if len(parts) == 2:
+                        try:
+                            self._manual_steer = int(parts[0])
+                            self._manual_speed = float(parts[1])
+                            self._manual_mode = True
+                            self._manual_last = time.time()
+                        except ValueError:
+                            pass
             except OSError:
                 pass
 
 
-def _bridge_step(sim, walls):
+def _bridge_step(sim, walls, bridge=None):
     """One simulation tick for bridge mode. Returns (s, steer, tgt_v)."""
     s = sense(sim['x'], sim['y'], sim['h'], walls)
     sim['sensors']   = s
     sim['ctrl']['v'] = sim['v']
-    steer, tgt_v     = work(sim['ctrl'], s)
+
+    # Manual drive mode ($DRV) — bypass autonomous control
+    if (bridge and bridge._manual_mode
+            and time.time() - bridge._manual_last < 0.5):
+        steer = bridge._manual_steer
+        tgt_v = bridge._manual_speed
+    else:
+        if bridge:
+            bridge._manual_mode = False
+        steer, tgt_v = work(sim['ctrl'], s)
+
     sim['steer']     = steer
     sim['target_v']  = tgt_v
 
@@ -610,7 +634,7 @@ def run_bridge(walls, x0, y0, h0, headless=False):
                                 pass
 
                 if bridge._running:
-                    s, steer, tgt_v = _bridge_step(sim, walls)
+                    s, steer, tgt_v = _bridge_step(sim, walls, bridge)
                     _send(s, steer, tgt_v)
                 else:
                     sim['v'] = 0.0
@@ -683,7 +707,7 @@ def run_bridge(walls, x0, y0, h0, headless=False):
                         pass
 
         if bridge._running:
-            s, steer, tgt_v = _bridge_step(sim, walls)
+            s, steer, tgt_v = _bridge_step(sim, walls, bridge)
         else:
             sim['v'] = 0.0
             sim['steer'] = 0

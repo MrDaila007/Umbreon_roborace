@@ -25,6 +25,10 @@ if "%1"=="demo" goto demo
 if "%1"=="compile" goto compile
 if "%1"=="upload" goto upload
 if "%1"=="clean" goto clean
+if "%1"=="ros2-build" goto ros2_build
+if "%1"=="ros2-run" goto ros2_run
+if "%1"=="ros2-sim" goto ros2_sim
+if "%1"=="ros2-shell" goto ros2_shell
 echo Unknown target: %1
 goto help
 
@@ -88,6 +92,26 @@ del /s /q *.pyc 2>nul
 echo Done.
 goto :eof
 
+:ros2_build
+echo Building ROS2 Docker image...
+cd ros2 && docker compose build
+goto :eof
+
+:ros2_run
+echo Starting ROS2 bridge (car at 192.168.4.1:23)...
+cd ros2 && docker compose up umbreon-bridge
+goto :eof
+
+:ros2_sim
+echo Starting ROS2 bridge (simulator at localhost:8023)...
+cd ros2 && docker compose --profile sim up umbreon-bridge-sim
+goto :eof
+
+:ros2_shell
+echo Opening ROS2 container shell...
+cd ros2 && docker compose run --rm umbreon-bridge bash
+goto :eof
+
 :help
 echo.
 echo   Umbreon Roborace
@@ -102,5 +126,9 @@ echo   make demo          Start sim bridge + web dashboard together
 echo   make compile        Compile firmware (arduino-cli)
 echo   make upload         Compile ^& upload firmware
 echo   make clean          Remove Python caches
+echo   make ros2-build     Build ROS2 Docker image
+echo   make ros2-run       Run ROS2 bridge (car)
+echo   make ros2-sim       Run ROS2 bridge (simulator)
+echo   make ros2-shell     Open ROS2 container shell
 echo.
 goto :eof

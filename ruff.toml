@@ -1,0 +1,10 @@
+line-length = 120
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E402",  # module-level import not at top (matplotlib.use() pattern)
+    "E702",  # multiple statements on one line (compact plotting code)
+    "F401",  # unused imports (re-exports, side-effect imports)
+    "F841",  # unused variable (matplotlib animation refs must be kept alive)
+]

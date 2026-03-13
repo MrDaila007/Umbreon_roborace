@@ -25,30 +25,27 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define MOTOR_PIN   11   // Motor ESC (PWM)
 #define TAHO_PIN    13   // Optical encoder on central rod (interrupt, RISING)
 
-// ─── Steering limits ──────────────────────────────────────────────────────────
-#define NEUTRAL_POINT  90
-#define MIN_POINT      40
-#define MAX_POINT      140
+// ─── Steering limits (runtime-configurable) ─────────────────────────────────
+extern int   cfg_neutral_point;
+extern int   cfg_min_point;
+extern int   cfg_max_point;
 
-// ─── ESC limits ───────────────────────────────────────────────────────────────
-#define NEUTRAL_SPEED  90
-#define MIN_SPEED      96   // slowest forward
-#define MAX_SPEED      110  // fastest forward
-#define MIN_BSPEED     85   // slowest reverse
+// ─── ESC limits (runtime-configurable) ──────────────────────────────────────
+#define NEUTRAL_SPEED  90       // never changes
+extern int   cfg_min_speed;     // slowest forward
+extern int   cfg_max_speed;     // fastest forward
+extern int   cfg_min_bspeed;    // slowest reverse
 
-// ─── Speed PID (auto-tuned: Tyreus-Luyben, Ku=9.20, Tu=0.648s) ──────────────
-#define PID_KP   4.18f
-#define PID_KI   2.93f
-#define PID_KD   0.43f
+// ─── Speed PID (runtime-configurable) ───────────────────────────────────────
+extern float cfg_pid_kp;
+extern float cfg_pid_ki;
+extern float cfg_pid_kd;
 
-// ─── Tachometer / speed ───────────────────────────────────────────────────────
-// Optical encoder: disc with 62 holes on the central rod (measured by taho_calibrate).
-// Wheel diameter: 60 mm  →  circumference = π × 0.060 m
-// Each pulse = 1 hole = 1/62 revolution
-// speed (m/s) = (π × d) / (ENCODER_HOLES × pulse_period_s)
-
-#define ENCODER_HOLES  62
-#define WHEEL_DIAM_M   0.060f   // 60 mm
+// ─── Tachometer / speed (runtime-configurable) ──────────────────────────────
+// Optical encoder: disc with N holes on the central rod.
+// speed (m/s) = (π × d) / (encoder_holes × pulse_period_s)
+extern int   cfg_encoder_holes;
+extern float cfg_wheel_diam_m;
 
 volatile unsigned long _taho_count = 0;
 volatile unsigned long _taho_last  = 0;
@@ -68,8 +65,8 @@ float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
     elapsed = max(elapsed, _taho_iv);
     if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
-    return (3.14159265f * WHEEL_DIAM_M) /
-           ((float)ENCODER_HOLES * ((float)elapsed / 1e6f));
+    return (3.14159265f * cfg_wheel_diam_m) /
+           ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));
 }
 
 // ─── TF-Luna packet state ─────────────────────────────────────────────────────
@@ -220,8 +217,8 @@ void Car::pid_control_motor() {
     unsigned long delta_cnt = cnt - pid_prev_cnt;
     pid_prev_cnt = cnt;
 
-    float raw_speed = (delta_cnt / (float)ENCODER_HOLES) *
-                      (3.14159265f * WHEEL_DIAM_M) / dt;
+    float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
+                      (3.14159265f * cfg_wheel_diam_m) / dt;
 
     // EMA filter
     pid_filtered = 0.5f * raw_speed + 0.5f * pid_filtered;
@@ -234,12 +231,12 @@ void Car::pid_control_motor() {
     float deriv = (error - pid_prev_error) / dt;
     pid_prev_error = error;
 
-    // feedforward: motor dead zone below MIN_SPEED
-    float ff = (target_speed > 0.01f) ? (float)(MIN_SPEED - NEUTRAL_SPEED) : 0;
-    float output = ff + PID_KP * error + PID_KI * pid_integral + PID_KD * deriv;
+    // feedforward: motor dead zone below cfg_min_speed
+    float ff = (target_speed > 0.01f) ? (float)(cfg_min_speed - NEUTRAL_SPEED) : 0;
+    float output = ff + cfg_pid_kp * error + cfg_pid_ki * pid_integral + cfg_pid_kd * deriv;
 
     int esc_val = NEUTRAL_SPEED + (int)output;
-    esc_val = constrain(esc_val, NEUTRAL_SPEED, MAX_SPEED);
+    esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
     motor_esc.write(esc_val);
 }
 
@@ -252,8 +249,8 @@ void Car::write_speed(int s) {
     pid_integral = 0; pid_prev_error = 0; pid_filtered = 0; pid_prev_ms = 0;
 
     s = constrain(s, -1000, 1000);
-    if      (s > 0) s = map(s,     1, 1000, MIN_SPEED,  MAX_SPEED);
-    else if (s < 0) s = map(s, -1000,   -1, 0,          MIN_BSPEED);
+    if      (s > 0) s = map(s,     1, 1000, cfg_min_speed,  cfg_max_speed);
+    else if (s < 0) s = map(s, -1000,   -1, 0,              cfg_min_bspeed);
     else            s = NEUTRAL_SPEED;
     motor_esc.write(s);
 }
@@ -262,8 +259,8 @@ void Car::write_speed(int s) {
 void Car::write_steer(int s) {
     s = -s;   // invert so positive = right (match original convention)
     s = constrain(s, -1000, 1000);
-    if (s < 0) s = map(s, -1000, 0,    MIN_POINT,    NEUTRAL_POINT);
-    else       s = map(s,     0, 1000, NEUTRAL_POINT, MAX_POINT);
+    if (s < 0) s = map(s, -1000, 0,    cfg_min_point,     cfg_neutral_point);
+    else       s = map(s,     0, 1000, cfg_neutral_point,  cfg_max_point);
     steer_servo.write(s);
 }
 

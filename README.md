@@ -17,7 +17,7 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | Microcontroller | RP2350 (Pico 2) | Arduino-Pico framework |
 | Distance sensors | 4x Benewake TF-Luna | UART, 115200 baud |
 | IMU | MPU-6050 | I2C, gyro Z only (optional) |
-| WiFi bridge | DT-06 (ESP-M2 / ESP8285) | Custom firmware, TCP bridge |
+| WiFi bridge | Wemos D1 Mini (ESP8266) | Custom firmware, TCP bridge |
 | Steering | Servo motor | PWM |
 | Drive | Brushless motor + ESC | PWM |
 | Speed feedback | Optical encoder (62 holes) | RISING interrupt |
@@ -46,7 +46,7 @@ Umbreon_roborace/
 |-- luna_car.h                Car hardware abstraction (LiDAR, ESC, servo, PID, IMU)
 |-- tests.h                   Bench testing utilities
 |-- wifi_debug/
-|   +-- wifi_debug.ino        DT-06 WiFi bridge firmware (ESP8285)
+|   +-- wifi_debug.ino        Wemos D1 Mini WiFi bridge firmware (ESP8266)
 |-- dashboard/
 |   |-- server.py             Web dashboard server (aiohttp)
 |   |-- static/index.html     Web UI -- charts, track map, settings
@@ -86,8 +86,8 @@ Umbreon_roborace/
 ### 2. Flash the WiFi bridge
 
 1. Install the **ESP8266** board package in Arduino IDE.
-2. Select board: **Generic ESP8285 Module**.
-3. Open `wifi_debug/wifi_debug.ino` and upload to the DT-06 module.
+2. Select board: **LOLIN(WEMOS) D1 mini**.
+3. Open `wifi_debug/wifi_debug.ino` and upload to the Wemos D1 Mini via USB.
 
 ### 3. Run the dashboard
 
@@ -230,7 +230,7 @@ On Windows, use `make.bat` (same targets).
 
 ### WiFi Bridge (Arduino IDE)
 
-- **Board**: `Generic ESP8285 Module` via ESP8266 core
+- **Board**: `LOLIN(WEMOS) D1 mini` via ESP8266 core
 
 ### Dashboard (Python)
 

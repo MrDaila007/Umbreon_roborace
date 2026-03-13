@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). It uses 4× TF-Luna LiDAR sensors for obstacle detection, an optical encoder for speed measurement, an optional MPU-6050 gyro for heading, and a DT-06 WiFi bridge for wireless telemetry and remote tuning. A Python web dashboard and 2D simulator complete the stack.
+Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). It uses 4× TF-Luna LiDAR sensors for obstacle detection, an optical encoder for speed measurement, an optional MPU-6050 gyro for heading, and a Wemos D1 Mini WiFi bridge for wireless telemetry and remote tuning. A Python web dashboard and 2D simulator complete the stack.
 
 ## Build & Run Commands
 
@@ -31,7 +31,7 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - FQBN: `rp2040:rp2040:rpipico2` (board package: [arduino-pico](https://github.com/earlephilhower/arduino-pico) v5.5.1)
 - arduino-cli is bundled with Arduino IDE at `%LOCALAPPDATA%\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli`
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
-- WiFi bridge: FQBN `esp8266:esp8266:generic` (ESP8285), upload `wifi_debug/wifi_debug.ino`
+- WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
 
 There is no automated linting or test suite. Diagnostics are in `tests.h` (sensor readouts, servo wiggle, speed ramps).
 
@@ -40,8 +40,8 @@ There is no automated linting or test suite. Diagnostics are in `tests.h` (senso
 ### Three-layer system
 
 ```
-Pico 2 Firmware ──UART1──▶ DT-06 WiFi Bridge ──TCP:23──▶ Dashboard / Simulator
-   (C++)                    (ESP8285)                      (Python + Web)
+Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──TCP:23──▶ Dashboard / Simulator
+   (C++)                    (ESP8266)                          (Python + Web)
 ```
 
 ### Firmware (`Umbreon_roborace.ino` + `luna_car.h`)
@@ -55,7 +55,7 @@ Pico 2 Firmware ──UART1──▶ DT-06 WiFi Bridge ──TCP:23──▶ Das
 - ESC: forward [96–110], reverse [0–85], neutral 90 (PWM angle)
 - 25 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
 
-### WiFi Bridge (`wifi_debug/wifi_debug.ino`)
+### WiFi Bridge (`wifi_debug/wifi_debug.ino`) — Wemos D1 Mini
 
 - Creates AP "Umbreon" (password `12345678`), TCP server on port 23
 - Transparent bidirectional UART ↔ TCP relay

@@ -27,11 +27,11 @@
 
 // ─── Feature flags ──────────────────────────────────────────────────────────
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
-#define USE_WIFI_DEBUG  1       // 1 = enable DT-06 WiFi telemetry, 0 = disable
+#define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
 
 #if USE_WIFI_DEBUG
-#define DEBUG_TX_PIN  6         // UART1 TX → DT-06 RX
-#define DEBUG_RX_PIN  7         // UART1 RX ← DT-06 TX
+#define DEBUG_TX_PIN  6         // UART1 TX → D1 Mini RX
+#define DEBUG_RX_PIN  7         // UART1 RX ← D1 Mini TX
 #endif
 
 // ─── Runtime-configurable globals (defaults match original #defines) ────────

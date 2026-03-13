@@ -17,7 +17,7 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | Microcontroller | RP2350 (Pico 2) | Arduino-Pico framework |
 | Distance sensors | 4x Benewake TF-Luna | UART, 115200 baud |
 | IMU | MPU-6050 | I2C, gyro Z only (optional) |
-| WiFi bridge | Wemos D1 Mini (ESP8266) | Custom firmware, TCP bridge |
+| WiFi bridge | Wemos D1 Mini (ESP8266) | 3-port server: HTTP, WebSocket, TCP |
 | Steering | Servo motor | PWM |
 | Drive | Brushless motor + ESC | PWM |
 | Speed feedback | Optical encoder (62 holes) | RISING interrupt |
@@ -30,8 +30,8 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | LiDAR 1 -- Front-Left | GP3 |
 | LiDAR 2 -- Front-Right | GP4 |
 | LiDAR 3 -- Right | GP5 |
-| WiFi TX (UART1) | GP6 |
-| WiFi RX (UART1) | GP7 |
+| WiFi TX (UART0) | GP16 |
+| WiFi RX (UART0) | GP17 |
 | IMU SDA (I2C) | GP0 |
 | IMU SCL (I2C) | GP1 |
 | Steering servo | GP10 |
@@ -46,7 +46,11 @@ Umbreon_roborace/
 |-- luna_car.h                Car hardware abstraction (LiDAR, ESC, servo, PID, IMU)
 |-- tests.h                   Bench testing utilities
 |-- wifi_debug/
-|   +-- wifi_debug.ino        Wemos D1 Mini WiFi bridge firmware (ESP8266)
+|   |-- wifi_debug.ino        Wemos D1 Mini WiFi bridge firmware (ESP8266)
+|   +-- web_ui.h              Built-in web dashboard (PROGMEM HTML/JS)
+|-- hardware_test_wifi/
+|   |-- hardware_test_wifi.ino  Standalone hardware test with WiFi + IMU
+|   +-- i2c_scanner/            I2C bus scanner for Umbreon pin config
 |-- dashboard/
 |   |-- server.py             Web dashboard server (aiohttp)
 |   |-- static/index.html     Web UI -- charts, track map, settings
@@ -85,9 +89,10 @@ Umbreon_roborace/
 
 ### 2. Flash the WiFi bridge
 
-1. Install the **ESP8266** board package in Arduino IDE.
+1. Install the **ESP8266** board package and **WebSockets** library (by Markus Sattler) in Arduino IDE.
 2. Select board: **LOLIN(WEMOS) D1 mini**.
 3. Open `wifi_debug/wifi_debug.ino` and upload to the Wemos D1 Mini via USB.
+4. The bridge supports **STA mode** (join your WiFi) and **AP mode** (create hotspot). Set `WIFI_MODE`, `STA_SSID`, `STA_PASS` at the top of the file. Falls back to AP if STA connection fails.
 
 ### 3. Run the dashboard
 
@@ -101,6 +106,8 @@ make web            # or: cd dashboard && python server.py
 
 Open **http://localhost:8080** in a browser. Connect to WiFi AP **Umbreon** (password `12345678`), then click Connect (default `192.168.4.1:23`).
 
+> **Built-in web dashboard**: You can also open **http://192.168.4.1** directly from a phone/laptop connected to the Umbreon AP — no Python server needed. The ESP serves a full dashboard with telemetry, track map, settings, hardware tests, and manual drive.
+
 ### 4. Test with the simulator (no hardware needed)
 
 ```bash
@@ -113,9 +120,21 @@ make web            # or: cd dashboard && python server.py
 
 Open **http://localhost:8080**, enter host `localhost`, port `8023`, click Connect.
 
-## Dashboard
+## Dashboards
 
-Live web dashboard with dark theme, zero external JS dependencies:
+### Built-in ESP Web Dashboard (phone-friendly)
+
+Open **http://192.168.4.1** from any device on the Umbreon WiFi — no server needed:
+
+- **Live telemetry** -- 4 LiDAR distances, speed, steer, IMU heading
+- **Track map** -- dead-reckoning trajectory with LiDAR wall points, pan/zoom
+- **Manual drive** -- steer/speed sliders with enable checkbox (no $START required)
+- **Remote settings** -- read/write all 25 parameters, save/load EEPROM
+- **Hardware tests** -- LiDAR, servo, tacho, ESC, speed, autotune, reactive
+
+### Python Web Dashboard (full-featured)
+
+Run `make web` and open **http://localhost:8080**:
 
 - **4 real-time charts** -- LiDAR distances, speed, steering, IMU
 - **Track map** -- dead-reckoning from speed + gyro, color-coded wall points
@@ -163,7 +182,7 @@ See [docs/tuning.md](docs/tuning.md) for the full 25-parameter tuning guide.
 
 ## Command Protocol
 
-ASCII commands over WiFi TCP (port 23):
+ASCII commands over WiFi (TCP:23, WebSocket:81, or built-in web UI on HTTP:80):
 
 | Command | Response | Description |
 |---|---|---|
@@ -174,6 +193,12 @@ ASCII commands over WiFi TCP (port 23):
 | `$LOAD` | `$ACK` | Restore from EEPROM |
 | `$RST` | `$ACK` | Reset to compile-time defaults |
 | `$DRV:<s>,<v>` | *(none)* | Manual drive (steer, speed m/s) — 500ms timeout |
+| `$DRVEN` | `$ACK` | Enable manual drive (works without $START) |
+| `$DRVOFF` | `$ACK` | Disable manual drive, stop motors |
+| `$START` | `$ACK` | Begin autonomous driving |
+| `$STOP` | `$ACK` | Halt motors, disable drive mode |
+| `$STATUS` | `$STS:RUN\|STOP` | Query running state |
+| `$TEST:<name>` | `$T:...` / `$TDONE:` | Run hardware test (lidar, servo, taho, esc, speed, autotune, reactive) |
 
 ## ROS2 Bridge (Docker)
 
@@ -231,6 +256,7 @@ On Windows, use `make.bat` (same targets).
 ### WiFi Bridge (Arduino IDE)
 
 - **Board**: `LOLIN(WEMOS) D1 mini` via ESP8266 core
+- **Library**: `WebSockets` by Markus Sattler (Arduino Library Manager)
 
 ### Dashboard (Python)
 

@@ -2,6 +2,8 @@
 
 Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x TF-Luna LiDAR** sensors, with a **live web dashboard** for telemetry, track mapping, and remote tuning.
 
+![Dashboard Demo](docs/Demo.gif)
+
 ## Hardware
 
 | Component | Model | Notes |

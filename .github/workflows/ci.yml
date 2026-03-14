@@ -45,7 +45,7 @@ jobs:
           cppcheck --language=c++ --std=c++17 --enable=warning,performance \
             --template='{file}:{line}:{column}: {severity}: {message} [{id}]' \
             --suppress=missingIncludeSystem \
-            *.ino *.h 2>&1 \
+            *.ino *.h hardware_test_esp32s3/*.ino 2>&1 \
             | reviewdog -efm='%f:%l:%c: %t%*[^:]: %m' -reporter=github-pr-review -level=warning
 
   # ── Firmware compilation ──────────────────────────────────────────
@@ -74,8 +74,42 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install rp2040:rp2040
 
-      - name: Compile firmware
+      - name: Compile firmware (RP2350)
         run: arduino-cli compile -b rp2040:rp2040:rpipico2 .
+
+  # ── ESP32-S3 firmware compilation ───────────────────────────────
+  esp32s3-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+
+      - name: Cache ESP32 board package
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino-esp32-${{ hashFiles('Umbreon_roborace.ino') }}
+          restore-keys: arduino-esp32-
+
+      - name: Install ESP32 board package and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+          arduino-cli lib install "ESP32Servo"
+          arduino-cli lib install "WebSockets"
+
+      - name: Compile firmware (ESP32-S3)
+        run: arduino-cli compile -b esp32:esp32:esp32s3 .
+
+      - name: Compile hardware test (ESP32-S3)
+        run: arduino-cli compile -b esp32:esp32:esp32s3 hardware_test_esp32s3/
 
   # ── Python lint ───────────────────────────────────────────────────
   python-lint:

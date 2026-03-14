@@ -2,20 +2,65 @@
 
 ## Overview
 
-The firmware is split into two layers, with a companion dashboard app:
+The firmware supports two hardware platforms from a single codebase, auto-detected at compile time:
+
+### Platform A: RP2350 + ESP8266 (two-chip)
+
+```
+Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:23 ──▶ Dashboard / ROS2
+   (luna_car.h)     GP17 TX → RX    (wifi_debug.ino)    ├─ HTTP:80 ─▶ Built-in Web UI
+                    GP16 RX ← TX                        └─ WS:81 ──▶ Web UI (real-time)
+```
+
+### Platform B: ESP32-S3 (single-chip)
+
+```
+ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Dashboard / ROS2
+   (hw_esp32s3.h)   ├─ HTTP:80 ─▶ Built-in Web UI
+   WiFi built-in    └─ WS:81 ──▶ Web UI (real-time)
+```
 
 | File | Role |
 |---|---|
-| `luna_car.h` | Hardware abstraction — sensors, actuators, PID, IMU |
-| `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol |
-| `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge |
+| `hw_config.h` | Platform auto-detection (`PLATFORM_RP2350` / `PLATFORM_ESP32S3`) |
+| `luna_car.h` | RP2350 hardware layer — SerialPIO LiDAR, Servo, PID, IMU |
+| `hw_esp32s3.h` | ESP32-S3 hardware layer — I2C LiDAR, WiFi, ESP32Servo, PID, IMU |
+| `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol (shared) |
+| `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge (RP2350 only) |
 | `dashboard/` | Python app — live plots, track map, remote settings editor |
+
+### Platform auto-detection (`hw_config.h`)
+
+```cpp
+#if defined(ARDUINO_ARCH_RP2040)        // arduino-pico (covers RP2350)
+  #define PLATFORM_RP2350   1
+  #define PLATFORM_ESP32S3  0
+#elif defined(CONFIG_IDF_TARGET_ESP32S3) || defined(ARDUINO_ESP32S3_DEV)
+  #define PLATFORM_RP2350   0
+  #define PLATFORM_ESP32S3  1
+#endif
+```
+
+### Telemetry abstraction
+
+Both platforms use `telem` for telemetry output. On RP2350, `telem` is `Serial1` (UART to ESP8266). On ESP32-S3, `telem` is `_telem_stream` — a `TelemetryStream` object that line-buffers output and broadcasts to TCP + WebSocket clients.
+
+The unified `HAS_TELEM` flag replaces `USE_WIFI_DEBUG`:
+- RP2350 with `USE_WIFI_DEBUG=1` → `HAS_TELEM=1`
+- ESP32-S3 → always `HAS_TELEM=1`
+- RP2350 without WiFi → `HAS_TELEM=0`
 
 ---
 
-## luna_car.h
+## Hardware Layers
 
-### TF-Luna LiDAR driver
+Both platforms expose the same `Car` class interface (`init`, `poll_lidars`, `read_sensors`, `write_speed`, `write_steer`, `pid_control_motor`, `imu_init`, `imu_update`), allowing `Umbreon_roborace.ino` to work unchanged.
+
+---
+
+## luna_car.h (RP2350)
+
+### TF-Luna LiDAR driver (UART)
 
 Each of the 4 sensors is read over a dedicated **SerialPIO** port (software UART, RX-only).
 
@@ -133,6 +178,66 @@ All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU en
 
 ---
 
+## hw_esp32s3.h (ESP32-S3)
+
+On the ESP32-S3, LiDARs, WiFi, and the web server are all handled on one chip — no separate WiFi bridge needed.
+
+### TF-Luna LiDAR driver (I2C)
+
+Sensors are connected to a shared **I2C bus** (GPIO 8 SDA, GPIO 9 SCL) with unique addresses:
+
+| Sensor | I2C Address |
+|---|---|
+| Left | 0x10 |
+| Front-Left | 0x11 |
+| Front-Right | 0x12 |
+| Right | 0x13 |
+
+> **Setup note**: TF-Luna sensors ship in UART mode (address 0x10). Each must be pre-configured for I2C mode with a unique address. See `hw_esp32s3.h` header comments for instructions.
+
+`poll_lidars()` reads 2 bytes from I2C register `0x00` on each sensor — far simpler than the RP2350's 9-byte UART packet parsing.
+
+`read_sensors()` returns the same `int[4]` in cm×10 for compatibility.
+
+### Built-in WiFi server
+
+The ESP32-S3 runs its own WiFi AP and web server (same AP name "Umbreon", password "12345678"):
+
+- **Port 80**: HTTP — serves the built-in web dashboard (`web_ui.h` PROGMEM)
+- **Port 81**: WebSocket — real-time bidirectional relay
+- **Port 23**: Raw TCP — backward compat with Python dashboard / ROS2 bridge
+
+WiFi also supports **STA mode** (join existing network) with AP fallback.
+
+### TelemetryStream
+
+A custom `Stream` subclass that replaces `Serial1`:
+
+- **Output**: line-buffered; when `\n` is written, the complete line is broadcast to all connected TCP and WebSocket clients
+- **Input**: ring buffer fed by TCP/WebSocket receive handlers; firmware reads commands via `telem.available()` / `telem.read()` as usual
+
+This allows all `telem.print()` calls in `Umbreon_roborace.ino` to work identically on both platforms.
+
+### Pin layout
+
+| Signal | GPIO |
+|---|---|
+| I2C SDA (LiDAR + IMU) | GPIO 8 |
+| I2C SCL (LiDAR + IMU) | GPIO 9 |
+| Steering servo | GPIO 10 |
+| Motor ESC | GPIO 11 |
+| Tachometer | GPIO 13 |
+| Status LED | GPIO 2 |
+
+### ESP32-specific notes
+
+- **ESP32Servo**: Uses LEDC PWM channels (same API as standard Servo library)
+- **IRAM_ATTR**: Required on tachometer ISR (ESP32 runs ISRs from IRAM, not flash)
+- **PROGMEM**: Memory-mapped on ESP32, so `server.send()` works directly (no `send_P` needed)
+- **IMU**: Same MPU-6050 setup, shared I2C bus with LiDARs (skips `Wire.begin()` since `Car::init()` already called it)
+
+---
+
 ## Umbreon_roborace.ino — Control Logic
 
 ### Main loop
@@ -147,7 +252,7 @@ loop()
     ├── steering
     ├── speed
     ├── pid_control_motor()
-    ├── WiFi telemetry        // (if USE_WIFI_DEBUG)
+    ├── WiFi telemetry        // (if HAS_TELEM)
     ├── stuck check
     └── wrong-direction / dead-end check
 ```
@@ -233,24 +338,27 @@ See [dashboard.md](dashboard.md) for the full key table and dashboard usage.
 
 ---
 
-## wifi_debug — Wemos D1 Mini WiFi Telemetry
+## wifi_debug — Wemos D1 Mini WiFi Telemetry (RP2350 only)
 
-Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Arduino IDE.
+Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Arduino IDE. **Not needed on ESP32-S3** — WiFi is built into `hw_esp32s3.h`.
 
 ### What it does
 
-Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **port 23**. Bidirectional transparent bridge: everything the car sends over UART appears on the TCP socket, and vice versa.
+Creates WiFi AP **"Umbreon"** (password `12345678`) and runs three servers:
+- **Port 80**: HTTP — built-in web dashboard (`web_ui.h`)
+- **Port 81**: WebSocket — real-time bidirectional relay for web UI
+- **Port 23**: Raw TCP — backward compat with Python dashboard / ROS2
 
 ### Wiring
 
 | D1 Mini | Pico 2 |
 |---|---|
-| RX | GP6 (UART1 TX) |
-| TX | GP7 (UART1 RX) |
+| RX | GP17 (UART1 TX) |
+| TX | GP16 (UART1 RX) |
 | 3V3 | 3.3 V (or power via USB) |
 | GND | GND |
 
-### Car-side telemetry (`USE_WIFI_DEBUG = 1`)
+### Car-side telemetry (`HAS_TELEM = 1`)
 
 Each control tick (25 Hz) the car sends a CSV line over UART1:
 

@@ -33,6 +33,8 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
 - WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
 - WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
+- **ESP32-S3** (planned): FQBN `esp32:esp32:esp32s3`, libraries: ESP32Servo, WebSockets (Markus Sattler)
+- ESP32-S3 uses I2C for TF-Luna (addresses 0x10–0x13) instead of SerialPIO UART
 
 ## Linting & CI
 
@@ -47,18 +49,37 @@ No automated test suite — diagnostics are in `tests.h` (7 WiFi-accessible hard
 
 ## Architecture
 
-### Three-layer system
+### Multi-platform support
 
+The firmware supports two hardware platforms via compile-time detection (`hw_config.h`):
+
+**Platform A — RP2350 + ESP8266 (current, two-chip):**
 ```
 Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
-   (C++)            GP17 TX → RX    (ESP8266)           ├─ HTTP:80 ─▶ Built-in Web UI (phone)
-                    GP16 RX ← TX                        └─ WS:81 ──▶ Built-in Web UI (real-time)
+   (C++)            GP16 TX → RX    (ESP8266)           ├─ HTTP:80 ─▶ Built-in Web UI (phone)
+                    GP17 RX ← TX                        └─ WS:81 ──▶ Built-in Web UI (real-time)
 ```
+- Hardware layer: `luna_car.h` (SerialPIO UART for LiDAR, Servo library)
+- WiFi bridge: separate `wifi_debug/wifi_debug.ino` firmware on ESP8266
+- Telemetry output: `telem` macro → `Serial1` (UART to ESP8266)
 
-### Firmware (`Umbreon_roborace.ino` + `luna_car.h`)
+**Platform B — ESP32-S3 (planned, single-chip):**
+```
+ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
+   (C++)            ├─ HTTP:80 ─▶ Built-in Web UI (phone)
+   WiFi built-in    └─ WS:81 ──▶ Built-in Web UI (real-time)
+```
+- Hardware layer: `hw_esp32s3.h` (I2C for LiDAR, ESP32Servo, built-in WiFi)
+- No separate bridge needed — WiFi servers run on same chip
+- Telemetry output: `telem` macro → `TelemetryStream` (broadcasts to WiFi clients)
+- TF-Luna sensors must be pre-configured for I2C mode with unique addresses (0x10–0x13)
+
+**Platform selection**: automatic via `hw_config.h` based on board package. The `HAS_TELEM` flag replaces `USE_WIFI_DEBUG` as the unified telemetry guard.
+
+### Firmware (`Umbreon_roborace.ino` + `luna_car.h` / `hw_esp32s3.h`)
 
 - **40 ms control loop** in `work()`: read LiDARs → IMU → steering logic → speed logic → PID → telemetry output → stuck/wrong-direction detection
-- `luna_car.h` is the hardware abstraction layer: LiDAR polling (SerialPIO), servo/ESC PWM, PID, tachometer ISR, IMU I2C
+- `luna_car.h` (RP2350) / `hw_esp32s3.h` (ESP32-S3): hardware abstraction layer with identical Car class interface
 - `tests.h` provides diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
 - **Start/Stop**: car boots stopped by default; `$START`/`$STOP` control driving; idle telemetry streams sensor data when stopped
 - **Remote tests**: 7 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)

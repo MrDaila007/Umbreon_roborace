@@ -1,5 +1,8 @@
 #pragma once
 
+#include "hw_config.h"
+#if PLATFORM_RP2350
+
 #include <Servo.h>
 #include <SerialPIO.h>
 
@@ -315,3 +318,5 @@ void Car::imu_update() {
         heading += yaw_rate * dt;
 }
 #endif
+
+#endif // PLATFORM_RP2350

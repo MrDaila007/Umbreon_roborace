@@ -23,13 +23,25 @@
  *   TF-Luna range: ~20 cm … 800 cm  →  200 … 8000 in these units
  */
 
+#include "hw_config.h"
+
 #pragma GCC optimize("Ofast")
 
 // ─── Feature flags ──────────────────────────────────────────────────────────
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
-#define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
 
-#if USE_WIFI_DEBUG
+#if PLATFORM_RP2350
+#define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
+#endif
+
+// Unified telemetry flag — true when any output channel is available
+#if (PLATFORM_RP2350 && defined(USE_WIFI_DEBUG) && USE_WIFI_DEBUG) || PLATFORM_ESP32S3
+  #define HAS_TELEM 1
+#else
+  #define HAS_TELEM 0
+#endif
+
+#if PLATFORM_RP2350 && HAS_TELEM
 #define DEBUG_TX_PIN  16         // GP16 = UART0 TX → D1 Mini RX
 #define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
 #endif
@@ -89,7 +101,15 @@ unsigned long last_drv_ms = 0;
 int manual_steer = 0;
 float manual_speed = 0.0f;
 
-#include "luna_car.h"
+// ─── Platform-specific hardware layer ──────────────────────────────────────
+#if PLATFORM_RP2350
+  #include "luna_car.h"
+  #define telem Serial1      // telemetry via UART to ESP8266 bridge
+#elif PLATFORM_ESP32S3
+  #include "hw_esp32s3.h"
+  #define telem _telem_stream // telemetry via built-in WiFi
+#endif
+
 #include "tests.h"      // hardware tests + WiFi remote tests
 
 #include <EEPROM.h>
@@ -221,42 +241,42 @@ bool save_settings() {
 }
 
 // ─── Command protocol ──────────────────────────────────────────────────────
-#if USE_WIFI_DEBUG
+#if HAS_TELEM
 static char cmd_buf[256];
 static int  cmd_len = 0;
 
 static void cmd_ping() {
-    Serial1.println("$PONG");
+    telem.println("$PONG");
 }
 
 static void cmd_get() {
-    Serial1.print("$CFG:");
-    Serial1.print("FOD=");  Serial1.print(cfg_front_obstacle_dist);
-    Serial1.print(",SOD="); Serial1.print(cfg_side_open_dist);
-    Serial1.print(",ACD="); Serial1.print(cfg_all_close_dist);
-    Serial1.print(",CFD="); Serial1.print(cfg_close_front_dist);
-    Serial1.print(",KP=");  Serial1.print(cfg_pid_kp, 2);
-    Serial1.print(",KI=");  Serial1.print(cfg_pid_ki, 2);
-    Serial1.print(",KD=");  Serial1.print(cfg_pid_kd, 2);
-    Serial1.print(",MSP="); Serial1.print(cfg_min_speed);
-    Serial1.print(",XSP="); Serial1.print(cfg_max_speed);
-    Serial1.print(",BSP="); Serial1.print(cfg_min_bspeed);
-    Serial1.print(",MNP="); Serial1.print(cfg_min_point);
-    Serial1.print(",XNP="); Serial1.print(cfg_max_point);
-    Serial1.print(",NTP="); Serial1.print(cfg_neutral_point);
-    Serial1.print(",ENH="); Serial1.print(cfg_encoder_holes);
-    Serial1.print(",WDM="); Serial1.print(cfg_wheel_diam_m, 3);
-    Serial1.print(",LMS="); Serial1.print(cfg_loop_ms);
-    Serial1.print(",SPD1="); Serial1.print(cfg_spd_clear, 1);
-    Serial1.print(",SPD2="); Serial1.print(cfg_spd_blocked, 1);
-    Serial1.print(",COE1="); Serial1.print(cfg_coe_clear, 2);
-    Serial1.print(",COE2="); Serial1.print(cfg_coe_blocked, 2);
-    Serial1.print(",WDD="); Serial1.print(cfg_wrong_dir_deg, 1);
-    Serial1.print(",RCW="); Serial1.print(cfg_race_cw ? 1 : 0);
-    Serial1.print(",STK="); Serial1.print(cfg_stuck_thresh);
-    Serial1.print(",IMU="); Serial1.print(USE_IMU);
-    Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
-    Serial1.println();
+    telem.print("$CFG:");
+    telem.print("FOD=");  telem.print(cfg_front_obstacle_dist);
+    telem.print(",SOD="); telem.print(cfg_side_open_dist);
+    telem.print(",ACD="); telem.print(cfg_all_close_dist);
+    telem.print(",CFD="); telem.print(cfg_close_front_dist);
+    telem.print(",KP=");  telem.print(cfg_pid_kp, 2);
+    telem.print(",KI=");  telem.print(cfg_pid_ki, 2);
+    telem.print(",KD=");  telem.print(cfg_pid_kd, 2);
+    telem.print(",MSP="); telem.print(cfg_min_speed);
+    telem.print(",XSP="); telem.print(cfg_max_speed);
+    telem.print(",BSP="); telem.print(cfg_min_bspeed);
+    telem.print(",MNP="); telem.print(cfg_min_point);
+    telem.print(",XNP="); telem.print(cfg_max_point);
+    telem.print(",NTP="); telem.print(cfg_neutral_point);
+    telem.print(",ENH="); telem.print(cfg_encoder_holes);
+    telem.print(",WDM="); telem.print(cfg_wheel_diam_m, 3);
+    telem.print(",LMS="); telem.print(cfg_loop_ms);
+    telem.print(",SPD1="); telem.print(cfg_spd_clear, 1);
+    telem.print(",SPD2="); telem.print(cfg_spd_blocked, 1);
+    telem.print(",COE1="); telem.print(cfg_coe_clear, 2);
+    telem.print(",COE2="); telem.print(cfg_coe_blocked, 2);
+    telem.print(",WDD="); telem.print(cfg_wrong_dir_deg, 1);
+    telem.print(",RCW="); telem.print(cfg_race_cw ? 1 : 0);
+    telem.print(",STK="); telem.print(cfg_stuck_thresh);
+    telem.print(",IMU="); telem.print(USE_IMU);
+    telem.print(",DBG="); telem.print(HAS_TELEM);
+    telem.println();
 }
 
 static bool parse_set_pair(const char* pair) {
@@ -310,25 +330,25 @@ static void cmd_set(const char* args) {
     char* token = strtok(buf, ",");
     while (token) {
         if (!parse_set_pair(token)) {
-            Serial1.print("$NAK:");
-            Serial1.println(token);
+            telem.print("$NAK:");
+            telem.println(token);
             return;
         }
         token = strtok(NULL, ",");
     }
-    Serial1.println("$ACK");
+    telem.println("$ACK");
 }
 
 static void cmd_save() {
     save_settings();
-    Serial1.println("$ACK");
+    telem.println("$ACK");
 }
 
 static void cmd_load() {
     if (load_settings()) {
-        Serial1.println("$ACK");
+        telem.println("$ACK");
     } else {
-        Serial1.println("$NAK:no_saved_config");
+        telem.println("$NAK:no_saved_config");
     }
 }
 
@@ -357,13 +377,13 @@ static void cmd_rst() {
     cfg_wrong_dir_deg = 120.0f;
     cfg_race_cw       = true;
     cfg_stuck_thresh  = 25;
-    Serial1.println("$ACK");
+    telem.println("$ACK");
 }
 
 // ─── WiFi remote tests ──────────────────────────────────────────────────
 
 static bool wifi_check_abort() {
-    if (Serial1.available() > 0 && Serial1.peek() == '$')
+    if (telem.available() > 0 && telem.peek() == '$')
         return true;
     return false;
 }
@@ -374,29 +394,29 @@ static void wifi_test_lidar() {
         if (wifi_check_abort()) break;
         car.poll_lidars();
         int* s = car.read_sensors();
-        Serial1.print("$T:LIDAR,L="); Serial1.print(s[0]);
-        Serial1.print(",FL=");        Serial1.print(s[1]);
-        Serial1.print(",FR=");        Serial1.print(s[2]);
-        Serial1.print(",R=");         Serial1.print(s[3]);
-        Serial1.println();
+        telem.print("$T:LIDAR,L="); telem.print(s[0]);
+        telem.print(",FL=");        telem.print(s[1]);
+        telem.print(",FR=");        telem.print(s[2]);
+        telem.print(",R=");         telem.print(s[3]);
+        telem.println();
         delay(100);
     }
-    Serial1.println("$TDONE:lidar");
+    telem.println("$TDONE:lidar");
 }
 
 static void wifi_test_servo() {
-    Serial1.println("$T:SERVO,phase=left");
+    telem.println("$T:SERVO,phase=left");
     car.write_steer(-1000); delay(800);
-    if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
+    if (wifi_check_abort()) { car.write_steer(0); telem.println("$TDONE:servo"); return; }
 
-    Serial1.println("$T:SERVO,phase=right");
+    telem.println("$T:SERVO,phase=right");
     car.write_steer(1000); delay(800);
-    if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
+    if (wifi_check_abort()) { car.write_steer(0); telem.println("$TDONE:servo"); return; }
 
-    Serial1.println("$T:SERVO,phase=center");
+    telem.println("$T:SERVO,phase=center");
     car.write_steer(0); delay(400);
 
-    Serial1.println("$T:SERVO,phase=sweep");
+    telem.println("$T:SERVO,phase=sweep");
     for (int i = -100; i <= 100; i++) {
         car.write_steer(i * 10);
         delay(8);
@@ -408,7 +428,7 @@ static void wifi_test_servo() {
         if (wifi_check_abort()) break;
     }
     car.write_steer(0);
-    Serial1.println("$TDONE:servo");
+    telem.println("$TDONE:servo");
 }
 
 static void wifi_test_taho() {
@@ -431,18 +451,18 @@ static void wifi_test_taho() {
         bool stopped = (micros() - _taho_last) > 500000UL;
         float speed_ms = stopped ? 0.0f : get_speed();
 
-        Serial1.print("$T:TAHO,pulses=");   Serial1.print(cnt);
-        Serial1.print(",interval=");         Serial1.print(iv);
-        Serial1.print(",speed=");            Serial1.print(speed_ms, 2);
-        Serial1.print(",state=");            Serial1.print(stopped ? "stopped" : "spinning");
-        Serial1.println();
+        telem.print("$T:TAHO,pulses=");   telem.print(cnt);
+        telem.print(",interval=");         telem.print(iv);
+        telem.print(",speed=");            telem.print(speed_ms, 2);
+        telem.print(",state=");            telem.print(stopped ? "stopped" : "spinning");
+        telem.println();
         delay(150);
     }
-    Serial1.println("$TDONE:taho");
+    telem.println("$TDONE:taho");
 }
 
 static void wifi_test_esc() {
-    Serial1.println("$T:ESC,phase=arm");
+    telem.println("$T:ESC,phase=arm");
     car.write_speed(0);
     delay(2000);
 
@@ -452,7 +472,7 @@ static void wifi_test_esc() {
     _taho_iv    = 0;
     interrupts();
 
-    Serial1.println("$T:ESC,phase=run");
+    telem.println("$T:ESC,phase=run");
     car.motor_esc.write(cfg_min_speed);
 
     unsigned long esc_start = millis();
@@ -468,10 +488,10 @@ static void wifi_test_esc() {
         float speed_ms = stopped ? 0.0f : get_speed();
         float revs = (float)cnt / (float)cfg_encoder_holes;
 
-        Serial1.print("$T:ESC,pulses=");  Serial1.print(cnt);
-        Serial1.print(",revs=");           Serial1.print(revs, 1);
-        Serial1.print(",speed=");          Serial1.print(speed_ms, 2);
-        Serial1.println();
+        telem.print("$T:ESC,pulses=");  telem.print(cnt);
+        telem.print(",revs=");           telem.print(revs, 1);
+        telem.print(",speed=");          telem.print(speed_ms, 2);
+        telem.println();
         delay(100);
     }
 
@@ -482,16 +502,16 @@ static void wifi_test_esc() {
     unsigned long final_cnt = _taho_count;
     interrupts();
 
-    Serial1.print("$T:ESC,phase=done,total_pulses=");  Serial1.print(final_cnt);
-    Serial1.print(",total_revs=");                      Serial1.print((float)final_cnt / cfg_encoder_holes, 1);
-    Serial1.println();
-    Serial1.println("$TDONE:esc");
+    telem.print("$T:ESC,phase=done,total_pulses=");  telem.print(final_cnt);
+    telem.print(",total_revs=");                      telem.print((float)final_cnt / cfg_encoder_holes, 1);
+    telem.println();
+    telem.println("$TDONE:esc");
 }
 
 static void wifi_test_speed() {
     float target = 1.5f;
 
-    Serial1.println("$T:SPEED,phase=arm");
+    telem.println("$T:SPEED,phase=arm");
     car.write_speed(0);
     delay(2000);
 
@@ -507,7 +527,7 @@ static void wifi_test_speed() {
     _taho_iv    = 0;
     interrupts();
 
-    Serial1.println("$T:SPEED,phase=run");
+    telem.println("$T:SPEED,phase=run");
     car.write_speed_ms(target);
     unsigned long prev_ms = millis();
     unsigned long start   = millis();
@@ -522,15 +542,15 @@ static void wifi_test_speed() {
 
         car.pid_control_motor();
 
-        Serial1.print("$T:SPEED,target=");   Serial1.print(target, 2);
-        Serial1.print(",actual=");            Serial1.print(get_speed(), 2);
-        Serial1.print(",filtered=");          Serial1.print(car.pid_filtered, 2);
-        Serial1.println();
+        telem.print("$T:SPEED,target=");   telem.print(target, 2);
+        telem.print(",actual=");            telem.print(get_speed(), 2);
+        telem.print(",filtered=");          telem.print(car.pid_filtered, 2);
+        telem.println();
     }
 
     car.write_speed(0);
     car.write_speed_ms(0);
-    Serial1.println("$TDONE:speed");
+    telem.println("$TDONE:speed");
 }
 
 static void wifi_test_autotune() {
@@ -542,7 +562,7 @@ static void wifi_test_autotune() {
     const int   NEED_HALF  = 12;
     const unsigned long TIMEOUT = 40000;
 
-    Serial1.println("$T:TUNE,phase=arm");
+    telem.println("$T:TUNE,phase=arm");
     car.write_speed(0);
     delay(2000);
 
@@ -550,7 +570,7 @@ static void wifi_test_autotune() {
     _taho_count = 0; _taho_last = micros(); _taho_iv = 0;
     interrupts();
 
-    Serial1.println("$T:TUNE,phase=relay");
+    telem.println("$T:TUNE,phase=relay");
 
     bool relay_high = true;
     float filtered = 0;
@@ -617,10 +637,10 @@ static void wifi_test_autotune() {
         esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
         car.motor_esc.write(esc_val);
 
-        Serial1.print("$T:TUNE,speed="); Serial1.print(filtered, 2);
-        Serial1.print(",relay=");         Serial1.print(relay_high ? 1 : 0);
-        Serial1.print(",half=");          Serial1.print(half_cycle);
-        Serial1.println();
+        telem.print("$T:TUNE,speed="); telem.print(filtered, 2);
+        telem.print(",relay=");         telem.print(relay_high ? 1 : 0);
+        telem.print(",half=");          telem.print(half_cycle);
+        telem.println();
 
         if (half_cycle >= SKIP_HALF + NEED_HALF) break;
     }
@@ -629,8 +649,8 @@ static void wifi_test_autotune() {
     delay(500);
 
     if (np < 2 || nt < 2 || nsw < 4) {
-        Serial1.println("$T:TUNE,phase=error,msg=not_enough_data");
-        Serial1.println("$TDONE:autotune");
+        telem.println("$T:TUNE,phase=error,msg=not_enough_data");
+        telem.println("$TDONE:autotune");
         return;
     }
 
@@ -652,37 +672,37 @@ static void wifi_test_autotune() {
     float Ku = 4.0f * RELAY_D / (3.14159f * amplitude);
 
     // Raw tune parameters
-    Serial1.print("$TR:TUNE,Ku="); Serial1.print(Ku, 2);
-    Serial1.print(",Tu=");          Serial1.print(Tu, 3);
-    Serial1.print(",amp=");         Serial1.print(amplitude, 3);
-    Serial1.println();
+    telem.print("$TR:TUNE,Ku="); telem.print(Ku, 2);
+    telem.print(",Tu=");          telem.print(Tu, 3);
+    telem.print(",amp=");         telem.print(amplitude, 3);
+    telem.println();
 
     // Ziegler-Nichols
     float zn_kP = 0.6f * Ku;
     float zn_kI = zn_kP / (0.5f * Tu);
     float zn_kD = zn_kP * Tu / 8.0f;
-    Serial1.print("$TR:ZN,KP="); Serial1.print(zn_kP, 2);
-    Serial1.print(",KI=");       Serial1.print(zn_kI, 2);
-    Serial1.print(",KD=");       Serial1.print(zn_kD, 3);
-    Serial1.println();
+    telem.print("$TR:ZN,KP="); telem.print(zn_kP, 2);
+    telem.print(",KI=");       telem.print(zn_kI, 2);
+    telem.print(",KD=");       telem.print(zn_kD, 3);
+    telem.println();
 
     // Tyreus-Luyben
     float tl_kP = Ku / 2.2f;
     float tl_kI = tl_kP / (2.2f * Tu);
     float tl_kD = tl_kP * Tu / 6.3f;
-    Serial1.print("$TR:TL,KP="); Serial1.print(tl_kP, 2);
-    Serial1.print(",KI=");       Serial1.print(tl_kI, 2);
-    Serial1.print(",KD=");       Serial1.print(tl_kD, 3);
-    Serial1.println();
+    telem.print("$TR:TL,KP="); telem.print(tl_kP, 2);
+    telem.print(",KI=");       telem.print(tl_kI, 2);
+    telem.print(",KD=");       telem.print(tl_kD, 3);
+    telem.println();
 
     // PI only
     float pi_kP = 0.45f * Ku;
     float pi_kI = pi_kP / (0.83f * Tu);
-    Serial1.print("$TR:PI,KP="); Serial1.print(pi_kP, 2);
-    Serial1.print(",KI=");       Serial1.print(pi_kI, 2);
-    Serial1.println(",KD=0.000");
+    telem.print("$TR:PI,KP="); telem.print(pi_kP, 2);
+    telem.print(",KI=");       telem.print(pi_kI, 2);
+    telem.println(",KD=0.000");
 
-    Serial1.println("$TDONE:autotune");
+    telem.println("$TDONE:autotune");
 }
 
 static void wifi_test_reactive() {
@@ -704,17 +724,17 @@ static void wifi_test_reactive() {
         int steer_val = (int)(steer_f * 1000.0f);
         car.write_steer(steer_val);
 
-        Serial1.print("$T:REACT,L="); Serial1.print(L);
-        Serial1.print(",FL=");         Serial1.print(FL);
-        Serial1.print(",FR=");         Serial1.print(FR);
-        Serial1.print(",R=");          Serial1.print(R);
-        Serial1.print(",steer=");      Serial1.print(steer_val);
-        Serial1.println();
+        telem.print("$T:REACT,L="); telem.print(L);
+        telem.print(",FL=");         telem.print(FL);
+        telem.print(",FR=");         telem.print(FR);
+        telem.print(",R=");          telem.print(R);
+        telem.print(",steer=");      telem.print(steer_val);
+        telem.println();
         delay(50);
     }
 
     car.write_steer(0);
-    Serial1.println("$TDONE:reactive");
+    telem.println("$TDONE:reactive");
 }
 
 // ─── Manual drive command ─────────────────────────────────────────────────
@@ -743,7 +763,7 @@ static void cmd_start() {
 #if USE_IMU
     car.reset_heading();
 #endif
-    Serial1.println("$ACK");
+    telem.println("$ACK");
 
     // 5-second countdown — idle telemetry flows, $STOP aborts
     unsigned long start_at = millis() + 5000;
@@ -754,7 +774,7 @@ static void cmd_start() {
         delay(cfg_loop_ms);
     }
     car_running = true;
-    Serial1.println("$STS:RUN");
+    telem.println("$STS:RUN");
 }
 
 static void cmd_stop() {
@@ -765,12 +785,12 @@ static void cmd_stop() {
     manual_speed = 0.0f;
     car.write_speed(0);
     car.write_steer(0);
-    Serial1.println("$ACK");
-    Serial1.println("$STS:STOP");
+    telem.println("$ACK");
+    telem.println("$STS:STOP");
 }
 
 static void cmd_status() {
-    Serial1.println(car_running ? "$STS:RUN" : "$STS:STOP");
+    telem.println(car_running ? "$STS:RUN" : "$STS:STOP");
 }
 
 static void cmd_test(const char* name) {
@@ -789,8 +809,8 @@ static void cmd_test(const char* name) {
     else if (strcmp(name, "autotune") == 0) wifi_test_autotune();
     else if (strcmp(name, "reactive") == 0) wifi_test_reactive();
     else {
-        Serial1.print("$NAK:unknown_test:");
-        Serial1.println(name);
+        telem.print("$NAK:unknown_test:");
+        telem.println(name);
     }
 }
 
@@ -806,19 +826,19 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$STATUS") == 0) cmd_status();
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
-    else if (strcmp(line, "$DRVEN")  == 0) { drv_enabled = true;  Serial1.println("$ACK"); }
+    else if (strcmp(line, "$DRVEN")  == 0) { drv_enabled = true;  telem.println("$ACK"); }
     else if (strcmp(line, "$DRVOFF") == 0) {
         drv_enabled = false; manual_mode = false;
         manual_steer = 0; manual_speed = 0.0f;
         car.write_steer(0); car.write_speed(0);
-        Serial1.println("$ACK");
+        telem.println("$ACK");
     }
     // Unknown commands silently ignored
 }
 
 static void process_commands() {
-    while (Serial1.available() > 0) {
-        char c = (char)Serial1.read();
+    while (telem.available() > 0) {
+        char c = (char)telem.read();
         if (c == '\n' || c == '\r') {
             if (cmd_len > 0) {
                 cmd_buf[cmd_len] = '\0';
@@ -838,23 +858,23 @@ static void send_idle_telemetry() {
     car.imu_update();
 #endif
     int* s = car.read_sensors();
-    Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
-    Serial1.print(0);                     Serial1.print(',');
-    Serial1.print(get_speed(), 2);        Serial1.print(',');
-    Serial1.print(0.0, 1);
+    telem.print(millis());              telem.print(',');
+    telem.print(s[0]);                  telem.print(',');
+    telem.print(s[1]);                  telem.print(',');
+    telem.print(s[2]);                  telem.print(',');
+    telem.print(s[3]);                  telem.print(',');
+    telem.print(0);                     telem.print(',');
+    telem.print(get_speed(), 2);        telem.print(',');
+    telem.print(0.0, 1);
 #if USE_IMU
-    Serial1.print(',');
-    Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
-    Serial1.print(car.heading, 1);
+    telem.print(',');
+    telem.print(car.yaw_rate, 1);       telem.print(',');
+    telem.print(car.heading, 1);
 #endif
-    Serial1.println();
+    telem.println();
 }
 
-#endif  // USE_WIFI_DEBUG
+#endif  // HAS_TELEM
 
 // ─── Stuck / reverse helpers ──────────────────────────────────────────────────
 void go_back() {
@@ -925,21 +945,21 @@ void work() {
     car.pid_control_motor();
 
     // ── Telemetry ────────────────────────────────────────────────────────────
-#if USE_WIFI_DEBUG
-    Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
-    Serial1.print((int)(diff * coef));    Serial1.print(',');
-    Serial1.print(get_speed(), 2);        Serial1.print(',');
-    Serial1.print(spd, 1);
+#if HAS_TELEM
+    telem.print(millis());              telem.print(',');
+    telem.print(s[0]);                  telem.print(',');
+    telem.print(s[1]);                  telem.print(',');
+    telem.print(s[2]);                  telem.print(',');
+    telem.print(s[3]);                  telem.print(',');
+    telem.print((int)(diff * coef));    telem.print(',');
+    telem.print(get_speed(), 2);        telem.print(',');
+    telem.print(spd, 1);
 #if USE_IMU
-    Serial1.print(',');
-    Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
-    Serial1.print(car.heading, 1);
+    telem.print(',');
+    telem.print(car.yaw_rate, 1);       telem.print(',');
+    telem.print(car.heading, 1);
 #endif
-    Serial1.println();
+    telem.println();
 #endif
 
     // ── Stuck detection ───────────────────────────────────────────────────────
@@ -1028,11 +1048,15 @@ void setup() {
 #if USE_IMU
     car.imu_init();
 #endif
-#if USE_WIFI_DEBUG
+#if PLATFORM_RP2350 && HAS_TELEM
     Serial1.setTX(DEBUG_TX_PIN);
     Serial1.setRX(DEBUG_RX_PIN);
     Serial1.begin(115200);
-    Serial1.println("#ms,s0,s1,s2,s3,steer,speed,target"
+#elif PLATFORM_ESP32S3
+    wifi_setup();
+#endif
+#if HAS_TELEM
+    telem.println("#ms,s0,s1,s2,s3,steer,speed,target"
 #if USE_IMU
                     ",yaw,heading"
 #endif
@@ -1045,7 +1069,12 @@ void loop() {
     // Drain LiDAR bytes even between control ticks
     car.poll_lidars();
 
-#if USE_WIFI_DEBUG
+#if PLATFORM_ESP32S3
+    // Handle WiFi servers (HTTP, WebSocket, TCP clients)
+    wifi_loop();
+#endif
+
+#if HAS_TELEM
     // Process incoming dashboard commands
     process_commands();
 #endif
@@ -1071,24 +1100,24 @@ void loop() {
             car.write_steer(manual_steer);
             car.write_speed_ms(manual_speed);
             car.pid_control_motor();
-#if USE_WIFI_DEBUG
-            Serial1.print(millis());              Serial1.print(',');
-            Serial1.print(s[0]);                  Serial1.print(',');
-            Serial1.print(s[1]);                  Serial1.print(',');
-            Serial1.print(s[2]);                  Serial1.print(',');
-            Serial1.print(s[3]);                  Serial1.print(',');
-            Serial1.print(manual_steer);          Serial1.print(',');
-            Serial1.print(get_speed(), 2);        Serial1.print(',');
-            Serial1.print(manual_speed, 1);
+#if HAS_TELEM
+            telem.print(millis());              telem.print(',');
+            telem.print(s[0]);                  telem.print(',');
+            telem.print(s[1]);                  telem.print(',');
+            telem.print(s[2]);                  telem.print(',');
+            telem.print(s[3]);                  telem.print(',');
+            telem.print(manual_steer);          telem.print(',');
+            telem.print(get_speed(), 2);        telem.print(',');
+            telem.print(manual_speed, 1);
 #if USE_IMU
-            Serial1.print(',');
-            Serial1.print(car.yaw_rate, 1);       Serial1.print(',');
-            Serial1.print(car.heading, 1);
+            telem.print(',');
+            telem.print(car.yaw_rate, 1);       telem.print(',');
+            telem.print(car.heading, 1);
 #endif
-            Serial1.println();
+            telem.println();
 #endif
         }
-#if USE_WIFI_DEBUG
+#if HAS_TELEM
         else {
             send_idle_telemetry();
         }

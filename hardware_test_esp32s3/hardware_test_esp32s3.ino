@@ -347,7 +347,7 @@ void IRAM_ATTR taho_isr() {
 
 float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - taho_last);
-    elapsed = max(elapsed, taho_iv);
+    elapsed = max(elapsed, (unsigned long)taho_iv);
     if (taho_iv == 0 || elapsed > 500000UL) return 0.0f;
     return WHEEL_CIRC_M / (PULSES_PER_REV * (elapsed / 1e6f));
 }

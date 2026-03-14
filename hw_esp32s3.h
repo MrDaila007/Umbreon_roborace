@@ -133,7 +133,7 @@ void IRAM_ATTR taho_interrupt() {
 
 float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
-    elapsed = max(elapsed, _taho_iv);
+    elapsed = max(elapsed, (unsigned long)_taho_iv);
     if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
     return (3.14159265f * cfg_wheel_diam_m) /
            ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));

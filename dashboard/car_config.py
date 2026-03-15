@@ -30,9 +30,9 @@ DEFAULTS = {
     "KP":    4.18,    # PID_KP
     "KI":    2.93,    # PID_KI
     "KD":    0.43,    # PID_KD
-    "MSP":    96,     # MIN_SPEED
-    "XSP":   110,     # MAX_SPEED
-    "BSP":    85,     # MIN_BSPEED
+    "MSP":  1540,     # MIN_SPEED (µs)
+    "XSP":  1700,     # MAX_SPEED (µs)
+    "BSP":  1460,     # MIN_BSPEED (µs)
     "MNP":    40,     # MIN_POINT (steering)
     "XNP":   140,     # MAX_POINT
     "NTP":    90,     # NEUTRAL_POINT
@@ -46,6 +46,9 @@ DEFAULTS = {
     "WDD": 120.0,     # WRONG_DIR_DEG
     "RCW":     1,     # RACE_CW (bool: 1=CW, 0=CCW)
     "STK":    25,     # stuck_time threshold
+    "IMR":     1,     # IMU rotated 180° (negate yaw)
+    "SVR":     1,     # Servo reverse (negate steering)
+    "CAL":     0,     # Calibrated flag (auto-set after ESC+servo cal)
     "IMU":     1,     # USE_IMU (read-only)
     "DBG":     1,     # USE_WIFI_DEBUG (read-only)
 }
@@ -59,9 +62,9 @@ KEY_NAMES = {
     "KP":   "PID Kp",
     "KI":   "PID Ki",
     "KD":   "PID Kd",
-    "MSP":  "Min Speed (ESC)",
-    "XSP":  "Max Speed (ESC)",
-    "BSP":  "Min Reverse Speed",
+    "MSP":  "Min Speed (µs)",
+    "XSP":  "Max Speed (µs)",
+    "BSP":  "Min Reverse (µs)",
     "MNP":  "Min Steer Point",
     "XNP":  "Max Steer Point",
     "NTP":  "Neutral Steer Point",
@@ -75,6 +78,9 @@ KEY_NAMES = {
     "WDD":  "Wrong Dir Degrees",
     "RCW":  "Race Clockwise",
     "STK":  "Stuck Threshold",
+    "IMR":  "IMU Rotated 180°",
+    "SVR":  "Servo Reverse",
+    "CAL":  "Calibrated",
     "IMU":  "IMU Enabled (r/o)",
     "DBG":  "WiFi Debug (r/o)",
 }
@@ -91,6 +97,7 @@ PARAM_GROUPS = {
     "Tachometer":         ["ENH", "WDM"],
     "Control Loop":       ["LMS", "SPD1", "SPD2", "COE1", "COE2"],
     "Navigation":         ["WDD", "RCW", "STK"],
+    "Hardware":           ["IMR", "SVR", "CAL"],
     "Flags (read-only)":  ["IMU", "DBG"],
 }
 

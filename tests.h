@@ -217,7 +217,7 @@ void test_esc(Car& car) {
 
     Serial.println("Minimal forward pulse (2 s)...");
     // cfg_min_speed is the lowest forward ESC value — write it directly
-    car.motor_esc.write(cfg_min_speed);
+    car.motor_esc.writeMicroseconds(cfg_min_speed);
 
     unsigned long esc_start = millis();
     while (millis() - esc_start < 2000) {
@@ -370,9 +370,9 @@ void test_autotune(Car& car) {
     if (c != 'y' && c != 'Y') { Serial.println("Cancelled."); return; }
 
     const float TARGET     = 1.5f;
-    const int   RELAY_D    = 2;
+    const int   RELAY_D    = 20;
     const float HYST       = 0.10f;
-    const int   BASE_ESC   = cfg_min_speed + 2;
+    const int   BASE_ESC   = cfg_min_speed + 20;
     const int   SKIP_HALF  = 4;
     const int   NEED_HALF  = 12;
     const unsigned long TIMEOUT = 40000;
@@ -400,7 +400,7 @@ void test_autotune(Car& car) {
     int np = 0, nt = 0, nsw = 0;
 
     int esc_val = constrain(BASE_ESC + RELAY_D, NEUTRAL_SPEED, cfg_max_speed);
-    car.motor_esc.write(esc_val);
+    car.motor_esc.writeMicroseconds(esc_val);
 
     while (millis() - start_ms < TIMEOUT) {
         car.poll_lidars();
@@ -451,7 +451,7 @@ void test_autotune(Car& car) {
 
         esc_val = relay_high ? (BASE_ESC + RELAY_D) : (BASE_ESC - RELAY_D);
         esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
-        car.motor_esc.write(esc_val);
+        car.motor_esc.writeMicroseconds(esc_val);
 
         Serial.print("D,"); Serial.print(now);
         Serial.print(","); Serial.print(TARGET, 2);

@@ -31,7 +31,7 @@ extern int   cfg_min_point;
 extern int   cfg_max_point;
 
 // ─── ESC limits (runtime-configurable) ──────────────────────────────────────
-#define NEUTRAL_SPEED  90       // never changes
+#define NEUTRAL_SPEED  1500     // µs — never changes
 extern int   cfg_min_speed;     // slowest forward
 extern int   cfg_max_speed;     // fastest forward
 extern int   cfg_min_bspeed;    // slowest reverse
@@ -237,7 +237,7 @@ void Car::pid_control_motor() {
 
     int esc_val = NEUTRAL_SPEED + (int)output;
     esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
-    motor_esc.write(esc_val);
+    motor_esc.writeMicroseconds(esc_val);
 }
 
 void Car::write_speed_ms(float s) {
@@ -249,15 +249,16 @@ void Car::write_speed(int s) {
     pid_integral = 0; pid_prev_error = 0; pid_filtered = 0; pid_prev_ms = 0;
 
     s = constrain(s, -1000, 1000);
-    if      (s > 0) s = map(s,     1, 1000, cfg_min_speed,  cfg_max_speed);
-    else if (s < 0) s = map(s, -1000,   -1, 0,              cfg_min_bspeed);
+    if      (s > 0) s = map(s,     1, 1000, cfg_min_speed,   cfg_max_speed);
+    else if (s < 0) s = map(s, -1000,   -1, 1000,            cfg_min_bspeed);
     else            s = NEUTRAL_SPEED;
-    motor_esc.write(s);
+    motor_esc.writeMicroseconds(s);
 }
 
 // ─── Steering ─────────────────────────────────────────────────────────────────
 void Car::write_steer(int s) {
-    s = -s;   // invert so positive = right (match original convention)
+    extern bool cfg_servo_reverse;
+    if (cfg_servo_reverse) s = -s;   // invert so positive = right (depends on servo mounting)
     s = constrain(s, -1000, 1000);
     if (s < 0) s = map(s, -1000, 0,    cfg_min_point,     cfg_neutral_point);
     else       s = map(s,     0, 1000, cfg_neutral_point,  cfg_max_point);
@@ -304,8 +305,10 @@ void Car::imu_update() {
     Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)2);
     if (Wire.available() < 2) return;
 
+    extern bool cfg_imu_rotate;
     int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
     yaw_rate = raw_z / GYRO_SENS;
+    if (cfg_imu_rotate) yaw_rate = -yaw_rate;
 
     unsigned long now = micros();
     float dt = (now - imu_prev_us) / 1e6f;

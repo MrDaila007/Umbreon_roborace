@@ -139,6 +139,7 @@ button:active{background:#475569}
       <button onclick="mtest('speed')">Speed</button>
       <button onclick="mtest('autotune')">Tune</button>
       <button onclick="send('$TEST:reactive')">React</button>
+      <button onclick="mtest('cal')">Calibrate</button>
     </div>
     <div class="btns" style="margin-top:4px">
       <button class="b-no" onclick="send('$STOP')">Abort</button>
@@ -176,6 +177,78 @@ button:active{background:#475569}
       </div>
       <div style="font-size:11px;color:#64748b">Enable checkbox to unlock controls. Release stops motors.</div>
     </div>
+  </div>
+</section>
+
+<!-- Servo Calibration -->
+<section>
+  <h2 id="calH" onclick="tog('cal')">Servo Calibration</h2>
+  <div id="cal" class="hidden">
+    <!-- Step indicator -->
+    <div id="calIdle">
+      <div class="info-row" style="margin-bottom:8px">
+        <span class="l">Min</span><span class="v" id="calCurMin">40</span>
+        <span class="l">Neutral</span><span class="v" id="calCurNtp">90</span>
+        <span class="l">Max</span><span class="v" id="calCurMax">140</span>
+      </div>
+      <div class="btns">
+        <button class="b-bl" onclick="calStart()">Calibrate Servo</button>
+      </div>
+    </div>
+    <!-- Wizard steps -->
+    <div id="calWiz" class="hidden">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px" id="calStep">Step 1: Set MIN position</div>
+      <div style="font-size:24px;font-weight:700;text-align:center;margin:8px 0;font-variant-numeric:tabular-nums" id="calAng">40&deg;</div>
+      <div class="btns" style="justify-content:center;margin-bottom:8px">
+        <button onclick="calAdj(-10)" style="font-size:18px;min-width:44px">&laquo;</button>
+        <button onclick="calAdj(-1)" style="font-size:18px;min-width:44px">&minus;</button>
+        <button onclick="calAdj(1)" style="font-size:18px;min-width:44px">+</button>
+        <button onclick="calAdj(10)" style="font-size:18px;min-width:44px">&raquo;</button>
+      </div>
+      <div class="btns">
+        <button class="b-go" onclick="calNext()" id="calOkBtn">OK &rarr;</button>
+        <button class="b-no" onclick="calCancel()">Cancel</button>
+      </div>
+    </div>
+    <!-- Verify step -->
+    <div id="calVerify" class="hidden">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">Verify positions:</div>
+      <div class="info-row" style="margin-bottom:8px">
+        <span class="l">Min</span><span class="v" id="calVMin">40</span>
+        <span class="l">Neutral</span><span class="v" id="calVNtp">90</span>
+        <span class="l">Max</span><span class="v" id="calVMax">140</span>
+      </div>
+      <div class="btns" style="margin-bottom:6px">
+        <button onclick="calPreview('min')">Test Min</button>
+        <button onclick="calPreview('ntp')">Test Neutral</button>
+        <button onclick="calPreview('max')">Test Max</button>
+      </div>
+      <div class="btns">
+        <button class="b-go" onclick="calSave()">Save</button>
+        <button class="b-bl" onclick="calStart()">Redo</button>
+        <button class="b-no" onclick="calCancel()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ESC Min Speed -->
+<section>
+  <h2 id="escH" onclick="tog('esc')">ESC Min Speed</h2>
+  <div id="esc" class="hidden">
+    <div class="sr">
+      <label>ESC</label>
+      <input type="range" id="escSlider" min="1500" max="1700" step="1" value="1540">
+      <span class="sv" id="escVal">1540</span>
+    </div>
+    <div class="info-row" style="margin:8px 0">
+      <span class="l">Current MSP</span><span class="v" id="escCurMsp">1540</span>
+    </div>
+    <div class="btns">
+      <button class="b-go" onclick="escApply()">Apply &amp; Save</button>
+      <button class="b-no" onclick="escStop()">Stop Motor</button>
+    </div>
+    <div style="font-size:11px;color:#64748b;margin-top:6px">Slide until wheels just start spinning. Apply to set as min forward speed (MSP).</div>
   </div>
 </section>
 
@@ -235,10 +308,10 @@ function proc(line){
 
 // --- Settings ---
 var LABELS={FOD:'Front Obstacle',SOD:'Side Open',ACD:'All Close',CFD:'Close Front',
-KP:'PID Kp',KI:'PID Ki',KD:'PID Kd',MSP:'Min Speed',XSP:'Max Speed',BSP:'Min Reverse',
+KP:'PID Kp',KI:'PID Ki',KD:'PID Kd',MSP:'Min Speed \u00b5s',XSP:'Max Speed \u00b5s',BSP:'Min Rev \u00b5s',
 MNP:'Min Steer',XNP:'Max Steer',NTP:'Neutral',ENH:'Encoder Holes',WDM:'Wheel Diam',
 LMS:'Loop ms',SPD1:'Spd Clear',SPD2:'Spd Blocked',COE1:'Coef Clear',COE2:'Coef Blocked',
-WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thresh',IMU:'IMU',DBG:'Debug'};
+WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thresh',IMR:'IMU Rotate',SVR:'Servo Reverse',CAL:'Calibrated',IMU:'IMU',DBG:'Debug'};
 var FLOATS={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1};
 var RO={IMU:1,DBG:1};
 
@@ -255,6 +328,13 @@ function parseCfg(cfg){
     if(RO[k])inp.disabled=true;
     d.appendChild(lb);d.appendChild(inp);el.appendChild(d);
   }
+  // Sync calibration panel with loaded values
+  var mnp=$('p_MNP'),xnp=$('p_XNP'),ntp=$('p_NTP');
+  if(mnp){calMn=parseInt(mnp.value);$('calCurMin').textContent=calMn}
+  if(xnp){calMx=parseInt(xnp.value);$('calCurMax').textContent=calMx}
+  if(ntp){calNt=parseInt(ntp.value);$('calCurNtp').textContent=calNt}
+  var msp=$('p_MSP');
+  if(msp){$('escCurMsp').textContent=msp.value;$('escSlider').value=msp.value;$('escVal').textContent=msp.value}
   toast('Config loaded','info');
 }
 
@@ -307,6 +387,73 @@ function drvStop(){
 function drvCenter(){
   $('dSteer').value=0;$('dSteerV').textContent='0';
   $('dSpeed').value=0;$('dSpeedV').textContent='0.0';
+}
+
+// --- Servo Calibration Wizard ---
+var calMn=40,calNt=90,calMx=140,calAng=90,calStep=0;
+var CAL_STEPS=['min','max','ntp'];
+var CAL_TITLES=['Step 1: Set MIN position','Step 2: Set MAX position','Step 3: Set NEUTRAL position'];
+
+function calShowPanel(p){
+  $('calIdle').className=p==='idle'?'':'hidden';
+  $('calWiz').className=p==='wiz'?'':'hidden';
+  $('calVerify').className=p==='verify'?'':'hidden';
+}
+function calMove(a){
+  calAng=Math.max(0,Math.min(180,a));
+  $('calAng').innerHTML=calAng+'&deg;';
+  send('$SRV:'+calAng);
+}
+function calAdj(d){calMove(calAng+d)}
+function calStart(){
+  calStep=0;
+  calAng=calMn;
+  calShowPanel('wiz');
+  $('calStep').textContent=CAL_TITLES[0];
+  $('calOkBtn').innerHTML='OK &rarr;';
+  calMove(calAng);
+}
+function calNext(){
+  if(calStep===0){calMn=calAng;calStep=1;calAng=calMx;$('calStep').textContent=CAL_TITLES[1];calMove(calAng)}
+  else if(calStep===1){calMx=calAng;calStep=2;calAng=calNt;$('calStep').textContent=CAL_TITLES[2];$('calOkBtn').innerHTML='OK &#10003;';calMove(calAng)}
+  else{calNt=calAng;calShowVerify()}
+}
+function calShowVerify(){
+  $('calVMin').textContent=calMn;$('calVNtp').textContent=calNt;$('calVMax').textContent=calMx;
+  calShowPanel('verify');
+}
+function calPreview(w){
+  if(w==='min')calMove(calMn);else if(w==='max')calMove(calMx);else calMove(calNt);
+}
+function calSave(){
+  send('$SET:MNP='+calMn+',NTP='+calNt+',XNP='+calMx);
+  send('$SAVE');
+  calMove(calNt);
+  $('calCurMin').textContent=calMn;$('calCurNtp').textContent=calNt;$('calCurMax').textContent=calMx;
+  calShowPanel('idle');
+  toast('Servo cal saved: '+calMn+'/'+calNt+'/'+calMx,'ok');
+}
+function calCancel(){
+  calMove(calNt);
+  calShowPanel('idle');
+}
+
+// --- ESC Min Speed ---
+$('escSlider').oninput=function(){
+  $('escVal').textContent=this.value;
+  send('$ESC:'+this.value);
+};
+function escApply(){
+  var v=$('escSlider').value;
+  send('$ESC:1500');
+  send('$SET:MSP='+v);
+  send('$SAVE');
+  $('escCurMsp').textContent=v;
+  toast('MSP='+v+' saved','ok');
+}
+function escStop(){
+  send('$ESC:1500');
+  $('escSlider').value=1500;$('escVal').textContent='1500';
 }
 
 // --- Track Map ---

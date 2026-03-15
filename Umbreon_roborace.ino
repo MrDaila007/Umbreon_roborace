@@ -46,10 +46,10 @@ float cfg_pid_kp   = 4.18f;
 float cfg_pid_ki   = 2.93f;
 float cfg_pid_kd   = 0.43f;
 
-// ESC limits
-int   cfg_min_speed   = 96;    // slowest forward
-int   cfg_max_speed   = 110;   // fastest forward
-int   cfg_min_bspeed  = 85;    // slowest reverse
+// ESC limits (µs, 1000–2000, neutral 1500)
+int   cfg_min_speed   = 1540;  // slowest forward (µs)
+int   cfg_max_speed   = 1700;  // fastest forward (µs)
+int   cfg_min_bspeed  = 1460;  // slowest reverse (µs)
 
 // Steering limits
 int   cfg_min_point     = 40;
@@ -73,6 +73,15 @@ float cfg_coe_blocked = 0.7f;   // steer coefficient when blocked
 float cfg_wrong_dir_deg = 120.0f;
 bool  cfg_race_cw       = true;
 int   cfg_stuck_thresh  = 25;
+
+// IMU
+bool  cfg_imu_rotate    = true;   // negate yaw when IMU is mounted 180° rotated
+
+// Servo
+bool  cfg_servo_reverse = true;   // negate steering input (depends on servo mounting)
+
+// Calibration
+bool  cfg_calibrated    = false;  // ESC+servo calibrated flag
 
 // ─── Start/Stop control ────────────────────────────────────────────────────
 // #define COMPETITION_MODE     // uncomment to start driving immediately
@@ -98,7 +107,7 @@ Car car;
 
 // ─── EEPROM settings ────────────────────────────────────────────────────────
 #define SETTINGS_MAGIC   0x554D4252   // "UMBR"
-#define SETTINGS_VERSION 1
+#define SETTINGS_VERSION 3
 #define SETTINGS_ADDR    0
 
 struct __attribute__((packed)) CarSettings {
@@ -113,10 +122,10 @@ struct __attribute__((packed)) CarSettings {
     float    pid_kp;
     float    pid_ki;
     float    pid_kd;
-    // ESC
-    int8_t   min_speed;
-    int8_t   max_speed;
-    int8_t   min_bspeed;
+    // ESC (µs, 1000–2000)
+    int16_t  min_speed;
+    int16_t  max_speed;
+    int16_t  min_bspeed;
     // Steering
     int8_t   min_point;
     int8_t   max_point;
@@ -134,6 +143,12 @@ struct __attribute__((packed)) CarSettings {
     float    wrong_dir_deg;
     uint8_t  race_cw;
     int8_t   stuck_thresh;
+    // IMU
+    uint8_t  imu_rotate;
+    // Servo
+    uint8_t  servo_reverse;
+    // Calibration
+    uint8_t  calibrated;
     // Checksum (sum of all preceding bytes)
     uint8_t  checksum;
 };
@@ -156,9 +171,9 @@ static void populate_struct(CarSettings& s) {
     s.pid_kp       = cfg_pid_kp;
     s.pid_ki       = cfg_pid_ki;
     s.pid_kd       = cfg_pid_kd;
-    s.min_speed    = (int8_t)cfg_min_speed;
-    s.max_speed    = (int8_t)cfg_max_speed;
-    s.min_bspeed   = (int8_t)cfg_min_bspeed;
+    s.min_speed    = (int16_t)cfg_min_speed;
+    s.max_speed    = (int16_t)cfg_max_speed;
+    s.min_bspeed   = (int16_t)cfg_min_bspeed;
     s.min_point    = (int8_t)cfg_min_point;
     s.max_point    = (int8_t)cfg_max_point;
     s.neutral_point = (int8_t)cfg_neutral_point;
@@ -172,6 +187,9 @@ static void populate_struct(CarSettings& s) {
     s.wrong_dir_deg = cfg_wrong_dir_deg;
     s.race_cw       = cfg_race_cw ? 1 : 0;
     s.stuck_thresh  = (int8_t)cfg_stuck_thresh;
+    s.imu_rotate    = cfg_imu_rotate ? 1 : 0;
+    s.servo_reverse = cfg_servo_reverse ? 1 : 0;
+    s.calibrated    = cfg_calibrated ? 1 : 0;
     s.checksum      = compute_checksum(s);
 }
 
@@ -199,6 +217,9 @@ static void apply_struct(const CarSettings& s) {
     cfg_wrong_dir_deg = s.wrong_dir_deg;
     cfg_race_cw       = s.race_cw != 0;
     cfg_stuck_thresh  = s.stuck_thresh;
+    cfg_imu_rotate    = s.imu_rotate != 0;
+    cfg_servo_reverse = s.servo_reverse != 0;
+    cfg_calibrated    = s.calibrated != 0;
 }
 
 bool load_settings() {
@@ -254,6 +275,9 @@ static void cmd_get() {
     Serial1.print(",WDD="); Serial1.print(cfg_wrong_dir_deg, 1);
     Serial1.print(",RCW="); Serial1.print(cfg_race_cw ? 1 : 0);
     Serial1.print(",STK="); Serial1.print(cfg_stuck_thresh);
+    Serial1.print(",IMR="); Serial1.print(cfg_imu_rotate ? 1 : 0);
+    Serial1.print(",SVR="); Serial1.print(cfg_servo_reverse ? 1 : 0);
+    Serial1.print(",CAL="); Serial1.print(cfg_calibrated ? 1 : 0);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
     Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
     Serial1.println();
@@ -295,6 +319,9 @@ static bool parse_set_pair(const char* pair) {
     else if (strcmp(key, "WDD")  == 0) cfg_wrong_dir_deg       = atof(val);
     else if (strcmp(key, "RCW")  == 0) cfg_race_cw             = atoi(val) != 0;
     else if (strcmp(key, "STK")  == 0) cfg_stuck_thresh        = atoi(val);
+    else if (strcmp(key, "IMR")  == 0) cfg_imu_rotate          = atoi(val) != 0;
+    else if (strcmp(key, "SVR")  == 0) cfg_servo_reverse       = atoi(val) != 0;
+    else if (strcmp(key, "CAL")  == 0) cfg_calibrated          = atoi(val) != 0;
     // IMU, DBG are read-only — silently ignore
     else return false;
 
@@ -341,9 +368,9 @@ static void cmd_rst() {
     cfg_pid_kp   = 4.18f;
     cfg_pid_ki   = 2.93f;
     cfg_pid_kd   = 0.43f;
-    cfg_min_speed   = 96;
-    cfg_max_speed   = 110;
-    cfg_min_bspeed  = 85;
+    cfg_min_speed   = 1540;
+    cfg_max_speed   = 1700;
+    cfg_min_bspeed  = 1460;
     cfg_min_point     = 40;
     cfg_max_point     = 140;
     cfg_neutral_point = 90;
@@ -357,6 +384,9 @@ static void cmd_rst() {
     cfg_wrong_dir_deg = 120.0f;
     cfg_race_cw       = true;
     cfg_stuck_thresh  = 25;
+    cfg_imu_rotate    = true;
+    cfg_servo_reverse = true;
+    cfg_calibrated    = false;
     Serial1.println("$ACK");
 }
 
@@ -453,7 +483,7 @@ static void wifi_test_esc() {
     interrupts();
 
     Serial1.println("$T:ESC,phase=run");
-    car.motor_esc.write(cfg_min_speed);
+    car.motor_esc.writeMicroseconds(cfg_min_speed);
 
     unsigned long esc_start = millis();
     while ((millis() - esc_start) < 2000) {
@@ -535,9 +565,9 @@ static void wifi_test_speed() {
 
 static void wifi_test_autotune() {
     const float TARGET     = 1.5f;
-    const int   RELAY_D    = 2;
+    const int   RELAY_D    = 20;
     const float HYST       = 0.10f;
-    const int   BASE_ESC   = cfg_min_speed + 2;
+    const int   BASE_ESC   = cfg_min_speed + 20;
     const int   SKIP_HALF  = 4;
     const int   NEED_HALF  = 12;
     const unsigned long TIMEOUT = 40000;
@@ -564,7 +594,7 @@ static void wifi_test_autotune() {
     int np = 0, nt = 0, nsw = 0;
 
     int esc_val = constrain(BASE_ESC + RELAY_D, NEUTRAL_SPEED, cfg_max_speed);
-    car.motor_esc.write(esc_val);
+    car.motor_esc.writeMicroseconds(esc_val);
 
     while (millis() - start_ms < TIMEOUT) {
         car.poll_lidars();
@@ -615,7 +645,7 @@ static void wifi_test_autotune() {
 
         esc_val = relay_high ? (BASE_ESC + RELAY_D) : (BASE_ESC - RELAY_D);
         esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
-        car.motor_esc.write(esc_val);
+        car.motor_esc.writeMicroseconds(esc_val);
 
         Serial1.print("$T:TUNE,speed="); Serial1.print(filtered, 2);
         Serial1.print(",relay=");         Serial1.print(relay_high ? 1 : 0);
@@ -788,6 +818,7 @@ static void cmd_test(const char* name) {
     else if (strcmp(name, "speed")    == 0) wifi_test_speed();
     else if (strcmp(name, "autotune") == 0) wifi_test_autotune();
     else if (strcmp(name, "reactive") == 0) wifi_test_reactive();
+    else if (strcmp(name, "cal")      == 0) { cfg_calibrated = false; run_calibration(); }
     else {
         Serial1.print("$NAK:unknown_test:");
         Serial1.println(name);
@@ -806,6 +837,16 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$STATUS") == 0) cmd_status();
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
+    else if (strncmp(line, "$SRV:", 5) == 0) {
+        // Direct servo write (raw 0-180°) for calibration
+        int angle = constrain(atoi(line + 5), 0, 180);
+        car.steer_servo.write(angle);
+    }
+    else if (strncmp(line, "$ESC:", 5) == 0) {
+        // Direct ESC write (µs 1000-2000) for min-speed calibration
+        int val = constrain(atoi(line + 5), 1000, 2000);
+        car.motor_esc.writeMicroseconds(val);
+    }
     else if (strcmp(line, "$DRVEN")  == 0) { drv_enabled = true;  Serial1.println("$ACK"); }
     else if (strcmp(line, "$DRVOFF") == 0) {
         drv_enabled = false; manual_mode = false;
@@ -855,6 +896,39 @@ static void send_idle_telemetry() {
 }
 
 #endif  // USE_WIFI_DEBUG
+
+// ─── ESC calibration ─────────────────────────────────────────────────────────
+// Standard ESC calibration: max throttle → ESC learns high endpoint,
+// min throttle → ESC learns low endpoint, then neutral.
+// Servo calibration is done manually via the web UI slider.
+void run_calibration() {
+#if USE_WIFI_DEBUG
+    Serial1.println("$T:CAL,phase=esc_max");
+#endif
+    car.motor_esc.writeMicroseconds(2000);  // ESC max signal
+    delay(3000);                            // wait for ESC to register max (beeps)
+
+#if USE_WIFI_DEBUG
+    Serial1.println("$T:CAL,phase=esc_min");
+#endif
+    car.motor_esc.writeMicroseconds(1000);  // ESC min signal
+    delay(3000);                            // wait for ESC to register min (beeps)
+
+#if USE_WIFI_DEBUG
+    Serial1.println("$T:CAL,phase=esc_neutral");
+#endif
+    car.motor_esc.writeMicroseconds(NEUTRAL_SPEED);  // neutral (1500µs)
+    delay(1000);
+
+    // Mark as calibrated and persist
+    cfg_calibrated = true;
+    save_settings();
+
+#if USE_WIFI_DEBUG
+    Serial1.println("$T:CAL,phase=done");
+    Serial1.println("$TDONE:cal");
+#endif
+}
 
 // ─── Stuck / reverse helpers ──────────────────────────────────────────────────
 void go_back() {
@@ -1038,7 +1112,13 @@ void setup() {
 #endif
                     );
 #endif
-    delay(3700);   // allow ESC to arm and LiDARs to start streaming
+
+    // Run ESC+servo calibration on first boot (or after $RST + reboot)
+    if (!cfg_calibrated) {
+        run_calibration();
+    } else {
+        delay(3700);   // allow ESC to arm and LiDARs to start streaming
+    }
 }
 
 void loop() {

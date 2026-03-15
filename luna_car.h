@@ -100,6 +100,7 @@ public:
     bool          imu_ok       = false;
     float         yaw_rate     = 0.0f;   // current gyro Z rate (°/s)
     float         heading      = 0.0f;   // accumulated heading change (°)
+    float         gyro_bias    = 0.0f;   // Z-axis bias (°/s), subtracted from readings
     unsigned long imu_prev_us  = 0;
 #endif
 
@@ -123,6 +124,7 @@ public:
 
 #if USE_IMU
     bool imu_init();
+    void imu_calibrate();   // sample gyro bias while stationary (~1s)
     void imu_update();
     void reset_heading() { heading = 0.0f; }
 #endif
@@ -296,6 +298,35 @@ bool Car::imu_init() {
     return true;
 }
 
+// Sample gyro Z while stationary to measure bias offset.
+// Takes ~1 second (200 samples at 5ms intervals). Call after imu_init(), before driving.
+void Car::imu_calibrate() {
+    if (!imu_ok) return;
+
+    const int SAMPLES = 200;
+    float sum = 0.0f;
+    int   count = 0;
+
+    for (int i = 0; i < SAMPLES; i++) {
+        Wire.beginTransmission(MPU6050_ADDR);
+        Wire.write(0x47);
+        Wire.endTransmission(false);
+        Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)2);
+        if (Wire.available() >= 2) {
+            int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
+            sum += raw_z / GYRO_SENS;
+            count++;
+        }
+        delay(5);
+    }
+
+    if (count > 0)
+        gyro_bias = sum / count;
+}
+
+#define IMU_EMA_ALPHA  0.3f    // EMA smoothing (0.0=max smooth, 1.0=no filter)
+#define IMU_DEADZONE   0.4f    // ignore rates below this (°/s) — kills drift when stationary
+
 void Car::imu_update() {
     if (!imu_ok) return;
 
@@ -307,8 +338,14 @@ void Car::imu_update() {
 
     extern bool cfg_imu_rotate;
     int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
-    yaw_rate = raw_z / GYRO_SENS;
-    if (cfg_imu_rotate) yaw_rate = -yaw_rate;
+    float raw_rate = (raw_z / GYRO_SENS) - gyro_bias;
+    if (cfg_imu_rotate) raw_rate = -raw_rate;
+
+    // Dead zone — zero out noise when nearly stationary
+    if (fabsf(raw_rate) < IMU_DEADZONE) raw_rate = 0.0f;
+
+    // EMA low-pass filter
+    yaw_rate = IMU_EMA_ALPHA * raw_rate + (1.0f - IMU_EMA_ALPHA) * yaw_rate;
 
     unsigned long now = micros();
     float dt = (now - imu_prev_us) / 1e6f;

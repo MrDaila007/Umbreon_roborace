@@ -1102,6 +1102,7 @@ void setup() {
     car.init();
 #if USE_IMU
     car.imu_init();
+    car.imu_calibrate();  // sample gyro bias while stationary (~1s)
 #endif
 #if USE_WIFI_DEBUG
     Serial1.setTX(DEBUG_TX_PIN);

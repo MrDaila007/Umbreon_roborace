@@ -287,6 +287,7 @@ MNP:'Min Steer',XNP:'Max Steer',NTP:'Neutral',ENH:'Enc Holes',WDM:'Wheel Diam',
 LMS:'Loop ms',SPD1:'Spd Clear',SPD2:'Spd Block',COE1:'Coef Clear',COE2:'Coef Block',
 WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'Calibrated',IMU:'IMU',DBG:'Debug'};
 var FL={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1};
+var BL={RCW:1,IMR:1,SVR:1,CAL:1,IMU:1,DBG:1};
 var RO={IMU:1,DBG:1},OR={};
 
 function pC(cfg){
@@ -297,8 +298,13 @@ kv=ps[i].split('=');if(kv.length<2)continue;
 k=kv[0];v=kv[1];OR[k]=v;
 d=document.createElement('div');d.className='pi';
 lb=document.createElement('label');lb.textContent=LB[k]||k;lb.title=k;
+if(BL[k]){
+inp=document.createElement('input');inp.type='checkbox';inp.id='p_'+k;inp.checked=parseInt(v)!==0;
+inp.style.cssText='width:20px;height:20px;accent-color:#3b82f6';
+}else{
 inp=document.createElement('input');inp.type='number';inp.id='p_'+k;inp.value=v;
 inp.step=FL[k]?'0.01':'1';
+}
 if(RO[k])inp.disabled=true;
 d.appendChild(lb);d.appendChild(inp);el.appendChild(d);
 }
@@ -316,7 +322,7 @@ var inp=Q('P').querySelectorAll('input:not([disabled])'),a=[],i,k,nv;
 for(i=0;i<inp.length;i++){
 k=inp[i].id.slice(2);
 if(!k||k.length<2||!LB[k])continue;
-nv=inp[i].value;
+nv=BL[k]?(inp[i].checked?'1':'0'):inp[i].value;
 if(OR.hasOwnProperty(k)){if(FL[k]?parseFloat(OR[k])===parseFloat(nv):OR[k]===nv)continue;}
 a.push(k+'='+nv);
 }

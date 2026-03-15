@@ -153,6 +153,7 @@ s3 R-Out   -45°     -90 mm (right)
 | Control Loop | `LMS` `SPD1` `SPD2` `COE1` `COE2` |
 | Navigation | `WDD` `RCW` `STK` |
 | Hardware | `IMR` `SVR` `CAL` |
+| Battery | `BEN` `BML` `BLV` |
 | Flags (read-only) | `IMU` `DBG` |
 
 ### Buttons
@@ -212,6 +213,9 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 | `IMR` | IMU Rotated 180° (0/1) | int |
 | `SVR` | Servo Reverse (0/1) | int |
 | `CAL` | ESC Calibrated (0/1) | int |
+| `BEN` | Battery Monitor Enabled (0/1) | int |
+| `BML` | Battery Divider Multiplier | float |
+| `BLV` | Battery Low Voltage Cutoff (V) | float |
 | `IMU` | IMU Enabled (read-only) | int |
 | `DBG` | WiFi Debug Enabled (read-only) | int |
 
@@ -222,9 +226,9 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 Settings are stored as a packed `CarSettings` struct at EEPROM address 0:
 
 - **Magic**: `0x554D4252` ("UMBR")
-- **Version**: 3
+- **Version**: 5
 - **Checksum**: sum of all preceding bytes (uint8)
-- **Size**: ~50 bytes
+- **Size**: ~60 bytes
 
 On boot, `load_settings()` reads EEPROM and validates magic + version + checksum. If valid, globals are populated from the stored values. If invalid (first boot, or corrupted), compile-time defaults are used.
 

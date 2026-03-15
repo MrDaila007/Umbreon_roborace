@@ -21,6 +21,7 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | Steering | Servo motor | PWM |
 | Drive | Brushless motor + ESC | PWM (1000–2000 µs) |
 | Speed feedback | Optical encoder (62 holes) | RISING interrupt |
+| Battery monitor | Resistor divider on ADC | R1=18kΩ, R2=10kΩ (optional) |
 
 ### Pin Layout
 
@@ -37,6 +38,7 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | Steering servo | GP10 |
 | Motor ESC | GP11 |
 | Tachometer | GP13 |
+| Battery ADC | GP26 (ADC0) |
 
 ## File Structure
 
@@ -129,9 +131,11 @@ Open **http://192.168.4.1** from any device on the Umbreon WiFi — no server ne
 - **Live telemetry** -- 4 LiDAR distances, speed, steer, IMU heading
 - **Track map** -- dead-reckoning trajectory with LiDAR wall points, pan/zoom
 - **Manual drive** -- steer/speed sliders with enable checkbox (no $START required)
-- **Remote settings** -- read/write all 28 parameters, save/load EEPROM
+- **Remote settings** -- read/write all 31 parameters in grouped categories, save/load EEPROM
 - **Servo calibration** -- step-by-step wizard to find min/max/neutral positions
 - **ESC min-speed** -- live slider to find the threshold where wheels start spinning
+- **Battery voltage** -- live display in header (green/yellow/red), low-voltage auto-cutoff
+- **Track map modes** -- normal, light (trail only, less CPU), or collapsed (zero overhead)
 - **Hardware tests** -- LiDAR, servo, tacho, ESC, speed, autotune, reactive, calibrate
 
 ### Python Web Dashboard (full-featured)
@@ -140,7 +144,7 @@ Run `make web` and open **http://localhost:8080**:
 
 - **4 real-time charts** -- LiDAR distances, speed, steering, IMU
 - **Track map** -- dead-reckoning from speed + gyro, color-coded wall points
-- **Remote settings** -- read/write all 28 parameters, save to EEPROM
+- **Remote settings** -- read/write all 31 parameters, save to EEPROM
 - **Recording** -- save telemetry to CSV
 
 See [docs/dashboard.md](docs/dashboard.md) for full reference.
@@ -155,7 +159,7 @@ loop (every 40 ms)
 |
 +-- work()
     |-- read_sensors()     get distances [Left, FL, FR, Right] in cm*10
-    |-- imu_update()       read gyro Z, integrate heading
+    |-- imu_update()       read gyro Z, bias-subtract, EMA filter, dead zone, integrate heading
     |-- steering logic     wall-balancing + obstacle avoidance
     |-- speed + PID        target m/s tracked with PID controller
     |-- telemetry          send CSV line over WiFi
@@ -184,8 +188,11 @@ All tuning parameters are runtime-configurable via the dashboard and persistable
 | `IMR` | 1 | IMU rotated 180° (negate yaw) |
 | `SVR` | 1 | Servo reverse (negate steering) |
 | `CAL` | 0 | ESC calibrated (auto-set on first boot) |
+| `BEN` | 0 | Battery monitoring enabled |
+| `BML` | 2.8 | Battery divider multiplier |
+| `BLV` | 6.0 | Low voltage cutoff (V) |
 
-See [docs/tuning.md](docs/tuning.md) for the full 28-parameter tuning guide.
+See [docs/tuning.md](docs/tuning.md) for the full 31-parameter tuning guide.
 
 ## Command Protocol
 
@@ -202,6 +209,7 @@ ASCII commands over WiFi (TCP:23, WebSocket:81, or built-in web UI on HTTP:80):
 | `$DRV:<s>,<v>` | *(none)* | Manual drive (steer, speed m/s) — 500ms timeout |
 | `$SRV:<angle>` | *(none)* | Direct servo write (0–180°) for calibration |
 | `$ESC:<us>` | *(none)* | Direct ESC write (1000–2000 µs) for calibration |
+| `$BAT` | `$BAT:<voltage>` | Read battery voltage (requires BEN=1) |
 | `$DRVEN` | `$ACK` | Enable manual drive (works without $START) |
 | `$DRVOFF` | `$ACK` | Disable manual drive, stop motors |
 | `$START` | `$ACK` | Begin autonomous driving |

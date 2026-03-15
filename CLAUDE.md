@@ -66,7 +66,9 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:
 - ESC: `writeMicroseconds()` — forward [1540–1700], reverse [1460–1000], neutral 1500 µs
 - **Calibration**: ESC auto-calibrates on first boot (max 2000→min 1000→neutral 1500 µs, saved to EEPROM). Servo calibration is manual via web UI wizard (step-by-step min/max/neutral with +/- buttons). ESC min-speed calibration via live slider in web UI.
 - **Hardware flags**: `IMR` (negate yaw for 180°-rotated IMU), `SVR` (reverse servo direction), `CAL` (ESC calibrated flag)
-- 28 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
+- **IMU signal processing**: bias calibration on boot (~1s, 200 samples), EMA low-pass filter (α=0.3), dead zone (0.4°/s) to eliminate drift
+- **Battery monitoring** (optional, `BEN`): ADC on GP26 via resistor divider (R1=18kΩ, R2=10kΩ, multiplier `BML`=2.8), EMA filtered, low-voltage cutoff (`BLV`=6.0V, 10s sustained → emergency stop). `$BAT` command returns voltage.
+- 31 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
 
 ### WiFi Bridge (`wifi_debug/wifi_debug.ino` + `web_ui.h`) — Wemos D1 Mini
 
@@ -104,6 +106,7 @@ $STATUS         → $STS:RUN|STOP     (query running state)
 $DRV:<s>,<v>   → (none)             (manual drive: steer -1000..+1000, speed m/s; fire-and-forget, 500ms timeout)
 $SRV:<angle>   → (none)             (direct servo write 0-180° for calibration)
 $ESC:<us>      → (none)             (direct ESC write 1000-2000 µs for calibration)
+$BAT            → $BAT:<voltage>     (read battery voltage, requires BEN=1)
 $TEST:<name>    → $T:<TAG>,k=v,...   (progress lines)
                    $TR:<method>,K=V  (results, autotune only)
                    $TDONE:<name>     (completion)
@@ -123,7 +126,7 @@ Tests auto-stop the car. Send `$STOP` to abort a running test.
 
 ## Key Constants
 
-- EEPROM magic: `0x554D4252` ("UMBR"), version 3
+- EEPROM magic: `0x554D4252` ("UMBR"), version 5
 - Encoder: 62 holes/rev, 60 mm wheel diameter
 - PID defaults (Tyreus-Luyben): KP=4.18, KI=2.93, KD=0.43
 - Servo range: 40°–140°, neutral 90° (configurable via calibration wizard)
@@ -179,4 +182,4 @@ ros2/
 
 ### Node Parameters
 
-`host`, `port`, `auto_connect` + all 23 writable car config keys (changes → `$SET`)
+`host`, `port`, `auto_connect` + all writable car config keys (changes → `$SET`)

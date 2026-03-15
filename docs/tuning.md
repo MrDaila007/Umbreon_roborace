@@ -138,3 +138,41 @@ Typical manual tuning:
 - Default output rate from the factory: **100 Hz** (one frame every 10 ms).
   At 115200 baud, 9-byte frames arrive faster than the 40 ms control loop — no data loss expected.
 - If a sensor returns all zeros, check wiring (TX of TF-Luna → RX GPIO, 5 V power, GND).
+
+---
+
+## IMU Signal Processing
+
+The MPU-6050 gyro Z readings go through a 3-stage pipeline to minimize drift:
+
+1. **Bias calibration** (`imu_calibrate()`): at boot, 200 samples over ~1s while stationary. Average offset stored as `gyro_bias` and subtracted from every reading.
+2. **EMA low-pass filter** (α=0.3): smooths high-frequency noise. Each reading = 30% new + 70% previous.
+3. **Dead zone** (0.4°/s): any filtered reading below ±0.4°/s is zeroed. Kills residual drift when stationary.
+
+Pipeline: `raw → bias subtract → EMA → dead zone → integrate to heading`
+
+If the dead zone is too aggressive during slow turns, reduce `IMU_DEADZONE` in `luna_car.h`. If still noisy, reduce `IMU_EMA_ALPHA`.
+
+---
+
+## Battery Monitoring
+
+Optional feature — enable with `BEN=1` in settings.
+
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `BEN` | `cfg_bat_enabled` | `0` | Enable/disable battery ADC reading and low-voltage cutoff |
+| `BML` | `cfg_bat_multiplier` | `2.8` | Resistor divider multiplier `(R1+R2)/R2`. Default for R1=18kΩ, R2=10kΩ |
+| `BLV` | `cfg_bat_low` | `6.0` | Low voltage cutoff (V). Car stops if below this for >10 seconds |
+
+**Wiring** (GP26 / ADC0):
+```
+Battery+ ──[18kΩ R1]──┬──[10kΩ R2]── GND
+                       └── GP26
+```
+
+**For different dividers**, calculate `BML = (R1+R2)/R2` and set via `$SET:BML=3.0`.
+
+**Low-voltage safety**: if `bat_voltage < BLV` for >10 consecutive seconds, the car emergency-stops (motors off, `$STS:STOP` + `$T:BAT,phase=LOW_VOLTAGE_CUTOFF` sent). The 10s timer resets if voltage recovers (prevents false triggers from voltage sag under motor load).
+
+**2S LiPo reference**: 8.4V full, 7.4V nominal, 6.0V empty (default cutoff).

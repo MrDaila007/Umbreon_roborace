@@ -123,12 +123,16 @@ I2C1 at 400 kHz. Only the **gyro Z-axis** is read (registers `0x47`–`0x48`).
 | Function | Description |
 |---|---|
 | `imu_init()` | Wakes sensor, sets gyro range & DLPF. Returns `false` if sensor not found (I2C NACK) — all IMU calls become no-ops. |
-| `imu_update()` | Reads gyro Z, integrates into `heading` (degrees). Called every control tick (25 Hz). Rejects stale samples (dt > 0.5 s). |
+| `imu_calibrate()` | Samples 200 gyro Z readings over ~1s while stationary, computes average bias offset. Called once at boot after `imu_init()`. |
+| `imu_update()` | Reads gyro Z, subtracts bias, applies EMA filter (α=0.3), applies dead zone (0.4°/s), integrates into `heading`. Called every control tick (25 Hz). |
 | `reset_heading()` | Zeroes `heading` accumulator. Called after every recovery manoeuvre. |
 
+**Signal pipeline:** `raw → bias subtract → EMA low-pass → dead zone → integrate`
+
 **Members:**
-- `yaw_rate` — latest gyro Z reading in °/s (positive = counter-clockwise). Negated when `IMR=1` (IMU mounted 180° rotated)
+- `yaw_rate` — filtered gyro Z reading in °/s (positive = counter-clockwise). Negated when `IMR=1` (IMU mounted 180° rotated)
 - `heading` — cumulative heading change in degrees since last reset
+- `gyro_bias` — calibrated Z-axis offset (°/s), subtracted from every reading
 
 All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU entirely from the binary (no `Wire.h` overhead).
 
@@ -141,16 +145,18 @@ All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU en
 ```
 loop()
 ├── poll_lidars()          // always — keep UART buffer empty
+├── bat_update()           // battery ADC (if BEN=1, self-throttles to 500ms)
 └── every 40 ms → work()
     ├── poll_lidars()      // fresh data before decisions
-    ├── imu_update()       // (if USE_IMU)
+    ├── imu_update()       // (if USE_IMU) — bias, EMA, dead zone, integrate
     ├── read_sensors()
     ├── steering
     ├── speed
     ├── pid_control_motor()
     ├── WiFi telemetry        // (if USE_WIFI_DEBUG)
     ├── stuck check
-    └── wrong-direction / dead-end check
+    ├── wrong-direction / dead-end check
+    └── low-voltage cutoff    // (if BEN=1, >10s below BLV → emergency stop)
 ```
 
 ### Steering logic
@@ -212,8 +218,8 @@ All tuning parameters (obstacle thresholds, PID gains, ESC/steering limits, spee
 
 ### EEPROM layout
 
-A packed `CarSettings` struct at address 0 (~42 bytes):
-- Magic `0x554D4252` ("UMBR"), version 3, all parameters, trailing checksum
+A packed `CarSettings` struct at address 0 (~60 bytes):
+- Magic `0x554D4252` ("UMBR"), version 5, all parameters, trailing checksum
 - `load_settings()` in `setup()` validates magic + version + checksum before applying
 - `save_settings()` populates struct, computes checksum, writes via `EEPROM.put()` + `commit()`
 
@@ -231,9 +237,24 @@ ASCII over the existing WiFi TCP bridge. Processed in `loop()` via `process_comm
 | `$RST` | `$ACK` | Reset to compile-time defaults |
 | `$SRV:<angle>` | *(none)* | Direct servo write (0–180°) for calibration |
 | `$ESC:<us>` | *(none)* | Direct ESC write (1000–2000 µs) for calibration |
+| `$BAT` | `$BAT:<voltage>` | Read battery voltage (requires BEN=1) |
 | `$TEST:cal` | `$T:CAL,...` / `$TDONE:cal` | Run ESC calibration (max→min→neutral) |
 
 See [dashboard.md](dashboard.md) for the full key table and dashboard usage.
+
+---
+
+## Battery Monitoring
+
+Optional feature on GP26 (ADC0). Disabled by default (`BEN=0`).
+
+**Hardware:** resistor divider — R1=18kΩ (bat→GP26), R2=10kΩ (GP26→GND). Multiplier `BML=(R1+R2)/R2=2.8`.
+
+**Software:**
+- `bat_update()` reads 12-bit ADC every 500ms (self-throttled), applies multiplier, EMA filter (α=0.05)
+- `$BAT` command returns `$BAT:7.42`
+- Low-voltage cutoff: if `bat_voltage < BLV` for >10s → emergency stop, sends `$T:BAT,phase=LOW_VOLTAGE_CUTOFF`
+- Web UI header shows voltage with color coding (green >7V, yellow 6.2–7V, red <6.2V), polled every 5s
 
 ---
 
@@ -244,6 +265,15 @@ Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Ard
 ### What it does
 
 Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **port 23**. Bidirectional transparent bridge: everything the car sends over UART appears on the TCP socket, and vice versa.
+
+**Built-in web UI** (`web_ui.h` PROGMEM, ~20KB):
+- Live telemetry (4 LiDARs, speed, steer, IMU, battery voltage)
+- Track map with normal/light/collapsed modes
+- Settings in grouped categories (⚠ Obstacles, ⏱ Speed, ⚙ PID, ⇄ Steering, ⏲ Loop, ⚸ Encoder, ☑ Flags, ⚡ Battery) with checkbox rendering for bool params
+- Servo calibration wizard (step-by-step min/max/neutral)
+- ESC min-speed slider
+- Manual drive with steer/speed sliders
+- Hardware tests with confirm dialogs for motor tests
 
 ### Wiring
 

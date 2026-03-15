@@ -78,7 +78,7 @@ int   cfg_stuck_thresh  = 25;
 bool  cfg_imu_rotate    = true;   // negate yaw when IMU is mounted 180° rotated
 
 // Servo
-bool  cfg_servo_reverse = true;   // negate steering input (depends on servo mounting)
+bool  cfg_servo_reverse = false;   // negate steering input (depends on servo mounting)
 
 // Calibration
 bool  cfg_calibrated    = false;  // ESC+servo calibrated flag
@@ -330,7 +330,8 @@ static bool parse_set_pair(const char* pair) {
 
 static void cmd_set(const char* args) {
     // args = "KP=5.0,KI=3.0,..."
-    char buf[200];
+    // Use a buffer at least as large as cmd_buf so long $SET lines with all params fit
+    char buf[256];
     strncpy(buf, args, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 

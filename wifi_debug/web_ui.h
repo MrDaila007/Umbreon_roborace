@@ -255,7 +255,7 @@ button:active{background:#475569}
 <div class="toast" id="toast"></div>
 
 <script>
-var ws,fc=0,dt=null;
+var ws,fc=0,dt=null,lastCmd='';
 function $(id){return document.getElementById(id)}
 
 // --- WebSocket ---
@@ -265,7 +265,12 @@ function conn(){
   ws.onclose=function(){$('wsDot').className='dot off';$('wsText').textContent='Reconnecting';setTimeout(conn,2000)};
   ws.onmessage=function(e){proc(e.data)};
 }
-function send(c){if(ws&&ws.readyState===1)ws.send(c)}
+function send(c){
+  if(ws&&ws.readyState===1){
+    ws.send(c);
+    lastCmd=c;
+  }
+}
 
 // --- Protocol ---
 function proc(line){
@@ -273,8 +278,18 @@ function proc(line){
   if(!line||line.charAt(0)==='#')return;
   if(line.charAt(0)==='$'){
     if(line==='$PONG')toast('PONG','ok');
-    else if(line==='$ACK')toast('ACK','ok');
-    else if(line.indexOf('$NAK:')===0)toast('NAK: '+line.slice(5),'err');
+    else if(line==='$ACK'){
+      if(lastCmd.indexOf('$SET:')===0)toast('Write OK','ok');
+      else if(lastCmd==='$SAVE')toast('Save EE OK','ok');
+      else if(lastCmd.indexOf('$TEST:')===0)toast('Test ACK','ok');
+      else toast('ACK','ok');
+    }
+    else if(line.indexOf('$NAK:')===0){
+      var reason=line.slice(5);
+      if(lastCmd.indexOf('$SET:')===0)toast('Write failed: '+reason,'err');
+      else if(lastCmd==='$SAVE')toast('Save EE failed: '+reason,'err');
+      else toast('NAK: '+reason,'err');
+    }
     else if(line.indexOf('$CFG:')===0)parseCfg(line.slice(5));
     else if(line==='$STS:RUN')setRun(true);
     else if(line==='$STS:STOP')setRun(false);
@@ -314,13 +329,16 @@ LMS:'Loop ms',SPD1:'Spd Clear',SPD2:'Spd Blocked',COE1:'Coef Clear',COE2:'Coef B
 WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thresh',IMR:'IMU Rotate',SVR:'Servo Reverse',CAL:'Calibrated',IMU:'IMU',DBG:'Debug'};
 var FLOATS={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1};
 var RO={IMU:1,DBG:1};
+var ORIG={};
 
 function parseCfg(cfg){
   var el=$('params');el.innerHTML='';
+  ORIG={};
   var pairs=cfg.split(',');
   for(var i=0;i<pairs.length;i++){
     var kv=pairs[i].split('=');if(kv.length<2)continue;
     var k=kv[0],v=kv[1];
+    ORIG[k]=v;
     var d=document.createElement('div');d.className='pm';
     var lb=document.createElement('label');lb.textContent=LABELS[k]||k;lb.title=k;
     var inp=document.createElement('input');inp.type='number';inp.id='p_'+k;inp.value=v;
@@ -343,9 +361,13 @@ function writeP(){
   var a=[];
   for(var i=0;i<inputs.length;i++){
     var k=inputs[i].id.slice(2);
-    a.push(k+'='+inputs[i].value);
+    if(!k||k.length<2||!LABELS[k])continue;
+    var nv=inputs[i].value;
+    if(ORIG.hasOwnProperty(k)&&String(ORIG[k])===String(nv))continue;
+    a.push(k+'='+nv);
   }
-  if(a.length)send('$SET:'+a.join(','));
+  if(a.length){ send('$SET:'+a.join(',')); toast('Writing '+a.length+' params','info'); }
+  else{ toast('Read settings first, or no writable params','err'); }
 }
 
 // --- Tests ---

@@ -49,6 +49,8 @@ DEFAULTS = {
     "IMR":     1,     # IMU rotated 180° (negate yaw)
     "SVR":     1,     # Servo reverse (negate steering)
     "CAL":     0,     # Calibrated flag (auto-set after ESC+servo cal)
+    "BML":   2.8,     # Battery divider multiplier (R1+R2)/R2
+    "BLV":   6.0,     # Battery low voltage cutoff (V)
     "IMU":     1,     # USE_IMU (read-only)
     "DBG":     1,     # USE_WIFI_DEBUG (read-only)
 }
@@ -81,6 +83,8 @@ KEY_NAMES = {
     "IMR":  "IMU Rotated 180°",
     "SVR":  "Servo Reverse",
     "CAL":  "Calibrated",
+    "BML":  "Battery Multiplier",
+    "BLV":  "Battery Low (V)",
     "IMU":  "IMU Enabled (r/o)",
     "DBG":  "WiFi Debug (r/o)",
 }
@@ -97,9 +101,9 @@ PARAM_GROUPS = {
     "Tachometer":         ["ENH", "WDM"],
     "Control Loop":       ["LMS", "SPD1", "SPD2", "COE1", "COE2"],
     "Navigation":         ["WDD", "RCW", "STK"],
-    "Hardware":           ["IMR", "SVR", "CAL"],
+    "Hardware":           ["IMR", "SVR", "CAL", "BML", "BLV"],
     "Flags (read-only)":  ["IMU", "DBG"],
 }
 
 # ─── Float keys (need float parsing/display, rest are int) ───────────────────
-FLOAT_KEYS = {"KP", "KI", "KD", "WDM", "SPD1", "SPD2", "COE1", "COE2", "WDD"}
+FLOAT_KEYS = {"KP", "KI", "KD", "WDM", "SPD1", "SPD2", "COE1", "COE2", "WDD", "BML", "BLV"}

@@ -61,6 +61,7 @@ button:active{background:#475569}
 <span class="dot off" id="D"></span>
 <span id="W">Connecting</span>
 <span class="bg stp" id="R">STOP</span>
+<span id="bV" style="font-weight:600">--V</span>
 <span style="color:#64748b" id="F">#0</span>
 </div>
 </header>
@@ -262,6 +263,7 @@ else if(l==='$STS:STOP')sR(0);
 else if(l.indexOf('$T:')===0)aL(l);
 else if(l.indexOf('$TR:')===0)aL(l);
 else if(l.indexOf('$TDONE:')===0){aL(l);tt('Test done','inf')}
+else if(l.indexOf('$BAT:')===0){var bv=parseFloat(l.slice(5));Q('bV').textContent=bv.toFixed(1)+'V';Q('bV').style.color=bv<6.2?'#ef4444':bv<7.0?'#f59e0b':'#22c55e'}
 }else{
 var p=l.split(',');
 if(p.length>=8){
@@ -285,8 +287,8 @@ var LB={FOD:'Front Obstacle',SOD:'Side Open',ACD:'All Close',CFD:'Close Front',
 KP:'PID Kp',KI:'PID Ki',KD:'PID Kd',MSP:'Min Spd \u00b5s',XSP:'Max Spd \u00b5s',BSP:'Min Rev \u00b5s',
 MNP:'Min Steer',XNP:'Max Steer',NTP:'Neutral',ENH:'Enc Holes',WDM:'Wheel Diam',
 LMS:'Loop ms',SPD1:'Spd Clear',SPD2:'Spd Block',COE1:'Coef Clear',COE2:'Coef Block',
-WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'Calibrated',IMU:'IMU',DBG:'Debug'};
-var FL={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1};
+WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'Calibrated',BML:'Bat Mult',BLV:'Bat Low V',IMU:'IMU',DBG:'Debug'};
+var FL={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1,BML:1,BLV:1};
 var BL={RCW:1,IMR:1,SVR:1,CAL:1,IMU:1,DBG:1};
 var RO={IMU:1,DBG:1},OR={};
 var GR=[
@@ -296,7 +298,8 @@ var GR=[
 ['\u21c4 Steering','MNP','XNP','NTP','COE1','COE2'],
 ['\u23f2 Loop','LMS','STK','WDD'],
 ['\u2638 Encoder','ENH','WDM'],
-['\u2611 Flags','RCW','IMR','SVR','CAL','IMU','DBG']
+['\u2611 Flags','RCW','IMR','SVR','CAL','IMU','DBG'],
+['\u26a1 Battery','BML','BLV']
 ];
 
 function pC(cfg){
@@ -500,6 +503,7 @@ var ti=null;
 function tt(m,t){var e=Q('T');e.textContent=m;e.className='toast '+(t||'inf')+' show';if(ti)clearTimeout(ti);ti=setTimeout(function(){e.classList.remove('show')},2000)}
 
 cn();
+setInterval(function(){S('$BAT')},5000);
 </script>
 </body>
 </html>)rawliteral";

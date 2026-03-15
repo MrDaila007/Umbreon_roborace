@@ -25,6 +25,13 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define MOTOR_PIN   11   // Motor ESC (PWM)
 #define TAHO_PIN    13   // Optical encoder on central rod (interrupt, RISING)
 
+// Battery voltage via resistor divider on ADC
+// Recommended: R1=18kΩ (bat→pin), R2=10kΩ (pin→GND) → multiplier 2.8, max 9V safe
+#define BAT_PIN     26   // GP26 = ADC0
+#define BAT_EMA     0.05f // slow EMA for stable reading
+
+extern float cfg_bat_multiplier;  // (R1+R2)/R2 — depends on your divider
+
 // ─── Steering limits (runtime-configurable) ─────────────────────────────────
 extern int   cfg_neutral_point;
 extern int   cfg_min_point;
@@ -104,9 +111,14 @@ public:
     unsigned long imu_prev_us  = 0;
 #endif
 
+    // Battery
+    float         bat_voltage  = 0.0f;   // filtered battery voltage (V)
+    unsigned long bat_prev_ms  = 0;
+
     const int sensor_amount = 4;
 
     void init();
+    void bat_update();  // read ADC, apply divider + EMA (call every loop tick, self-throttles)
 
     // Drive & steering (same interface as original big_car.h)
     void write_speed(int s);          // raw ESC value  -1000…1000
@@ -145,6 +157,10 @@ void Car::init() {
 
     pinMode(TAHO_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(TAHO_PIN), taho_interrupt, RISING);
+
+    // Battery ADC
+    analogReadResolution(12);  // 12-bit (0–4095)
+    pinMode(BAT_PIN, INPUT);
 
     _serials[0] = &_lidar_serial0;
     _serials[1] = &_lidar_serial1;
@@ -265,6 +281,22 @@ void Car::write_steer(int s) {
     if (s < 0) s = map(s, -1000, 0,    cfg_min_point,     cfg_neutral_point);
     else       s = map(s,     0, 1000, cfg_neutral_point,  cfg_max_point);
     steer_servo.write(s);
+}
+
+// ─── Battery voltage (ADC + resistor divider) ────────────────────────────────
+void Car::bat_update() {
+    // Self-throttle: read every 500ms (ADC is slow, voltage changes slowly)
+    unsigned long now = millis();
+    if (now - bat_prev_ms < 500) return;
+    bat_prev_ms = now;
+
+    int raw = analogRead(BAT_PIN);
+    float v_adc = raw * (3.3f / 4095.0f);
+    float v_bat = v_adc * cfg_bat_multiplier;
+
+    // EMA filter for stable display
+    if (bat_voltage < 0.1f) bat_voltage = v_bat;  // first reading — seed
+    else bat_voltage = BAT_EMA * v_bat + (1.0f - BAT_EMA) * bat_voltage;
 }
 
 // ─── IMU (MPU-6050 gyro Z) ──────────────────────────────────────────────────

@@ -83,6 +83,10 @@ bool  cfg_servo_reverse = false;   // negate steering input (depends on servo mo
 // Calibration
 bool  cfg_calibrated    = false;  // ESC+servo calibrated flag
 
+// Battery monitoring
+float cfg_bat_multiplier = 2.8f;  // (R1+R2)/R2 — default for R1=18k, R2=10k
+float cfg_bat_low        = 6.0f;  // low voltage cutoff (V) — stop car if below for 10s
+
 // ─── Start/Stop control ────────────────────────────────────────────────────
 // #define COMPETITION_MODE     // uncomment to start driving immediately
 #ifdef COMPETITION_MODE
@@ -107,7 +111,7 @@ Car car;
 
 // ─── EEPROM settings ────────────────────────────────────────────────────────
 #define SETTINGS_MAGIC   0x554D4252   // "UMBR"
-#define SETTINGS_VERSION 3
+#define SETTINGS_VERSION 5
 #define SETTINGS_ADDR    0
 
 struct __attribute__((packed)) CarSettings {
@@ -149,6 +153,9 @@ struct __attribute__((packed)) CarSettings {
     uint8_t  servo_reverse;
     // Calibration
     uint8_t  calibrated;
+    // Battery
+    float    bat_multiplier;
+    float    bat_low;
     // Checksum (sum of all preceding bytes)
     uint8_t  checksum;
 };
@@ -190,6 +197,8 @@ static void populate_struct(CarSettings& s) {
     s.imu_rotate    = cfg_imu_rotate ? 1 : 0;
     s.servo_reverse = cfg_servo_reverse ? 1 : 0;
     s.calibrated    = cfg_calibrated ? 1 : 0;
+    s.bat_multiplier = cfg_bat_multiplier;
+    s.bat_low        = cfg_bat_low;
     s.checksum      = compute_checksum(s);
 }
 
@@ -220,6 +229,8 @@ static void apply_struct(const CarSettings& s) {
     cfg_imu_rotate    = s.imu_rotate != 0;
     cfg_servo_reverse = s.servo_reverse != 0;
     cfg_calibrated    = s.calibrated != 0;
+    cfg_bat_multiplier = s.bat_multiplier;
+    cfg_bat_low        = s.bat_low;
 }
 
 bool load_settings() {
@@ -278,6 +289,8 @@ static void cmd_get() {
     Serial1.print(",IMR="); Serial1.print(cfg_imu_rotate ? 1 : 0);
     Serial1.print(",SVR="); Serial1.print(cfg_servo_reverse ? 1 : 0);
     Serial1.print(",CAL="); Serial1.print(cfg_calibrated ? 1 : 0);
+    Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 2);
+    Serial1.print(",BLV="); Serial1.print(cfg_bat_low, 1);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
     Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
     Serial1.println();
@@ -322,6 +335,8 @@ static bool parse_set_pair(const char* pair) {
     else if (strcmp(key, "IMR")  == 0) cfg_imu_rotate          = atoi(val) != 0;
     else if (strcmp(key, "SVR")  == 0) cfg_servo_reverse       = atoi(val) != 0;
     else if (strcmp(key, "CAL")  == 0) cfg_calibrated          = atoi(val) != 0;
+    else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = atof(val);
+    else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = atof(val);
     // IMU, DBG are read-only — silently ignore
     else return false;
 
@@ -388,6 +403,8 @@ static void cmd_rst() {
     cfg_imu_rotate    = true;
     cfg_servo_reverse = true;
     cfg_calibrated    = false;
+    cfg_bat_multiplier = 2.8f;
+    cfg_bat_low        = 6.0f;
     Serial1.println("$ACK");
 }
 
@@ -836,6 +853,9 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$START")  == 0) cmd_start();
     else if (strcmp(line, "$STOP")   == 0) cmd_stop();
     else if (strcmp(line, "$STATUS") == 0) cmd_status();
+    else if (strcmp(line, "$BAT")    == 0) {
+        Serial1.print("$BAT:"); Serial1.println(car.bat_voltage, 2);
+    }
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
     else if (strncmp(line, "$SRV:", 5) == 0) {
@@ -1126,6 +1146,7 @@ void setup() {
 void loop() {
     // Drain LiDAR bytes even between control ticks
     car.poll_lidars();
+    car.bat_update();  // read battery ADC (self-throttles to every 500ms)
 
 #if USE_WIFI_DEBUG
     // Process incoming dashboard commands
@@ -1175,5 +1196,27 @@ void loop() {
             send_idle_telemetry();
         }
 #endif
+
+        // ── Low-voltage safety cutoff ────────────────────────────────────
+        static unsigned long bat_low_since = 0;
+        if (car.bat_voltage > 0.5f && car.bat_voltage < cfg_bat_low) {
+            if (bat_low_since == 0) bat_low_since = now;
+            else if (now - bat_low_since > 10000) {
+                // Low voltage for >10 seconds — emergency stop
+                if (car_running || drv_enabled) {
+                    car_running = false;
+                    drv_enabled = false;
+                    manual_mode = false;
+                    car.write_speed(0);
+                    car.write_steer(0);
+#if USE_WIFI_DEBUG
+                    Serial1.println("$STS:STOP");
+                    Serial1.println("$T:BAT,phase=LOW_VOLTAGE_CUTOFF");
+#endif
+                }
+            }
+        } else {
+            bat_low_since = 0;  // voltage OK — reset timer
+        }
     }
 }

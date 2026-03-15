@@ -243,7 +243,7 @@ bool save_settings() {
 
 // ─── Command protocol ──────────────────────────────────────────────────────
 #if USE_WIFI_DEBUG
-static char cmd_buf[256];
+static char cmd_buf[512];
 static int  cmd_len = 0;
 
 static void cmd_ping() {
@@ -331,7 +331,7 @@ static bool parse_set_pair(const char* pair) {
 static void cmd_set(const char* args) {
     // args = "KP=5.0,KI=3.0,..."
     // Use a buffer at least as large as cmd_buf so long $SET lines with all params fit
-    char buf[256];
+    char buf[512];
     strncpy(buf, args, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 

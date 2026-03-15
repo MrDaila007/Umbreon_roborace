@@ -49,6 +49,7 @@ DEFAULTS = {
     "IMR":     1,     # IMU rotated 180° (negate yaw)
     "SVR":     1,     # Servo reverse (negate steering)
     "CAL":     0,     # Calibrated flag (auto-set after ESC+servo cal)
+    "BEN":     0,     # Battery monitoring enabled
     "BML":   2.8,     # Battery divider multiplier (R1+R2)/R2
     "BLV":   6.0,     # Battery low voltage cutoff (V)
     "IMU":     1,     # USE_IMU (read-only)
@@ -83,6 +84,7 @@ KEY_NAMES = {
     "IMR":  "IMU Rotated 180°",
     "SVR":  "Servo Reverse",
     "CAL":  "Calibrated",
+    "BEN":  "Battery Monitor",
     "BML":  "Battery Multiplier",
     "BLV":  "Battery Low (V)",
     "IMU":  "IMU Enabled (r/o)",
@@ -101,7 +103,7 @@ PARAM_GROUPS = {
     "Tachometer":         ["ENH", "WDM"],
     "Control Loop":       ["LMS", "SPD1", "SPD2", "COE1", "COE2"],
     "Navigation":         ["WDD", "RCW", "STK"],
-    "Hardware":           ["IMR", "SVR", "CAL", "BML", "BLV"],
+    "Hardware":           ["IMR", "SVR", "CAL", "BEN", "BML", "BLV"],
     "Flags (read-only)":  ["IMU", "DBG"],
 }
 

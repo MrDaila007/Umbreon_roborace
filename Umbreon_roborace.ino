@@ -84,8 +84,9 @@ bool  cfg_servo_reverse = false;   // negate steering input (depends on servo mo
 bool  cfg_calibrated    = false;  // ESC+servo calibrated flag
 
 // Battery monitoring
-float cfg_bat_multiplier = 2.8f;  // (R1+R2)/R2 — default for R1=18k, R2=10k
-float cfg_bat_low        = 6.0f;  // low voltage cutoff (V) — stop car if below for 10s
+bool  cfg_bat_enabled    = false;  // enable battery voltage monitoring
+float cfg_bat_multiplier = 2.8f;   // (R1+R2)/R2 — default for R1=18k, R2=10k
+float cfg_bat_low        = 6.0f;   // low voltage cutoff (V) — stop car if below for 10s
 
 // ─── Start/Stop control ────────────────────────────────────────────────────
 // #define COMPETITION_MODE     // uncomment to start driving immediately
@@ -154,6 +155,7 @@ struct __attribute__((packed)) CarSettings {
     // Calibration
     uint8_t  calibrated;
     // Battery
+    uint8_t  bat_enabled;
     float    bat_multiplier;
     float    bat_low;
     // Checksum (sum of all preceding bytes)
@@ -197,6 +199,7 @@ static void populate_struct(CarSettings& s) {
     s.imu_rotate    = cfg_imu_rotate ? 1 : 0;
     s.servo_reverse = cfg_servo_reverse ? 1 : 0;
     s.calibrated    = cfg_calibrated ? 1 : 0;
+    s.bat_enabled    = cfg_bat_enabled ? 1 : 0;
     s.bat_multiplier = cfg_bat_multiplier;
     s.bat_low        = cfg_bat_low;
     s.checksum      = compute_checksum(s);
@@ -229,6 +232,7 @@ static void apply_struct(const CarSettings& s) {
     cfg_imu_rotate    = s.imu_rotate != 0;
     cfg_servo_reverse = s.servo_reverse != 0;
     cfg_calibrated    = s.calibrated != 0;
+    cfg_bat_enabled    = s.bat_enabled != 0;
     cfg_bat_multiplier = s.bat_multiplier;
     cfg_bat_low        = s.bat_low;
 }
@@ -289,6 +293,7 @@ static void cmd_get() {
     Serial1.print(",IMR="); Serial1.print(cfg_imu_rotate ? 1 : 0);
     Serial1.print(",SVR="); Serial1.print(cfg_servo_reverse ? 1 : 0);
     Serial1.print(",CAL="); Serial1.print(cfg_calibrated ? 1 : 0);
+    Serial1.print(",BEN="); Serial1.print(cfg_bat_enabled ? 1 : 0);
     Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 2);
     Serial1.print(",BLV="); Serial1.print(cfg_bat_low, 1);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
@@ -335,6 +340,7 @@ static bool parse_set_pair(const char* pair) {
     else if (strcmp(key, "IMR")  == 0) cfg_imu_rotate          = atoi(val) != 0;
     else if (strcmp(key, "SVR")  == 0) cfg_servo_reverse       = atoi(val) != 0;
     else if (strcmp(key, "CAL")  == 0) cfg_calibrated          = atoi(val) != 0;
+    else if (strcmp(key, "BEN")  == 0) cfg_bat_enabled          = atoi(val) != 0;
     else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = atof(val);
     else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = atof(val);
     // IMU, DBG are read-only — silently ignore
@@ -403,6 +409,7 @@ static void cmd_rst() {
     cfg_imu_rotate    = true;
     cfg_servo_reverse = true;
     cfg_calibrated    = false;
+    cfg_bat_enabled    = false;
     cfg_bat_multiplier = 2.8f;
     cfg_bat_low        = 6.0f;
     Serial1.println("$ACK");
@@ -1146,7 +1153,7 @@ void setup() {
 void loop() {
     // Drain LiDAR bytes even between control ticks
     car.poll_lidars();
-    car.bat_update();  // read battery ADC (self-throttles to every 500ms)
+    if (cfg_bat_enabled) car.bat_update();  // read battery ADC (self-throttles to every 500ms)
 
 #if USE_WIFI_DEBUG
     // Process incoming dashboard commands
@@ -1199,7 +1206,7 @@ void loop() {
 
         // ── Low-voltage safety cutoff ────────────────────────────────────
         static unsigned long bat_low_since = 0;
-        if (car.bat_voltage > 0.5f && car.bat_voltage < cfg_bat_low) {
+        if (cfg_bat_enabled && car.bat_voltage > 0.5f && car.bat_voltage < cfg_bat_low) {
             if (bat_low_since == 0) bat_low_since = now;
             else if (now - bat_low_since > 10000) {
                 // Low voltage for >10 seconds — emergency stop

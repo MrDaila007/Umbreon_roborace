@@ -91,8 +91,11 @@ button:active{background:#475569}
 <button onclick="mR()" style="padding:6px 10px;font-size:11px">Reset</button>
 <button onclick="mZ(1.4)" style="padding:6px 10px;font-size:11px">+</button>
 <button onclick="mZ(.7)" style="padding:6px 10px;font-size:11px">&minus;</button>
-<label class="fs" style="display:flex;align-items:center;gap:4px;margin-left:auto">
+<label class="fs" style="display:flex;align-items:center;gap:4px">
 <input type="checkbox" id="mF" checked> Follow
+</label>
+<label class="fs" style="display:flex;align-items:center;gap:4px">
+<input type="checkbox" id="mL" onchange="mLt(this.checked)"> Light
 </label>
 <span class="fs" id="mP">0, 0</span>
 </div>
@@ -274,7 +277,7 @@ Q('sp').textContent=parseFloat(p[6]).toFixed(2)+' m/s';
 Q('tg').textContent=parseFloat(p[7]).toFixed(1)+' m/s';
 var hi=p.length>=10,yw=0;
 if(hi){yw=parseFloat(p[8]);Q('iR').classList.remove('hid');Q('yw').textContent=yw.toFixed(1)+'\u00b0/s';Q('hd').textContent=parseFloat(p[9]).toFixed(1)+'\u00b0'}
-mU(parseInt(p[0]),[s0,s1,s2,s3],parseInt(p[5]),parseFloat(p[6]),yw,hi);
+if(mOn)mU(parseInt(p[0]),[s0,s1,s2,s3],parseInt(p[5]),parseFloat(p[6]),yw,hi);
 }}}
 
 // --- Settings ---
@@ -324,7 +327,10 @@ else tt('No changes','err');
 function mt(n){if(confirm('Motor will spin! OK?'))S('$TEST:'+n)}
 function aL(l){var e=Q('log');e.textContent+=l+'\n';e.scrollTop=e.scrollHeight}
 function sR(r){var b=Q('R');b.textContent=r?'RUN':'STOP';b.className='bg '+(r?'run':'stp')}
-function tog(id){Q(id).classList.toggle('hid');Q(id+'H').classList.toggle('open')}
+function tog(id){
+Q(id).classList.toggle('hid');Q(id+'H').classList.toggle('open');
+if(id==='map')mOn=!Q('map').classList.contains('hid');
+}
 
 // --- Manual drive ---
 Q('dS').oninput=function(){Q('dSV').textContent=this.value};
@@ -368,8 +374,19 @@ function eX(){S('$ESC:1500');Q('eS').value=1500;Q('eV').textContent='1500'}
 // --- Track Map ---
 var mx=0,my=0,mh=0,mp=0,ms=150,mo=0,mn=0;
 var tr=[],wl=[[],[],[],[]],md=false;
+var mOn=true,mLi=false; // mOn=map active (section open), mLi=light mode
+var TRL=600,WLL=400; // trail/wall limits (normal)
 var SD=[45,0,0,-45],SL=[.09,.04,-.04,-.09],SF=.253,WB=.173,MX=28*Math.PI/180;
 var SC=['#2ca02c','#1f77b4','#ff7f0e','#d62728'];
+
+function mLt(on){
+mLi=on;
+if(on){TRL=150;WLL=100;
+// trim existing data
+while(tr.length>TRL)tr.shift();
+for(var i=0;i<4;i++)while(wl[i].length>WLL)wl[i].shift();
+}else{TRL=600;WLL=400}
+}
 
 function mU(t,s,st,sp,yw,hi){
 if(mp===0){mp=t;return}
@@ -378,32 +395,40 @@ if(dt<=0||dt>1)return;
 if(hi){mh+=yw*Math.PI/180*dt}
 else{var sa=st/1000*MX;if(Math.abs(sa)>.001)mh+=sp*dt/(WB/Math.tan(sa))}
 mx+=sp*dt*Math.cos(mh);my+=sp*dt*Math.sin(mh);
-tr.push([mx,my]);if(tr.length>600)tr.shift();
+tr.push([mx,my]);if(tr.length>TRL)tr.shift();
+if(!mLi){
 var ch=Math.cos(mh),sh=Math.sin(mh),i,dm,sx,sy,ra;
 for(i=0;i<4;i++){
 dm=s[i]/10000;if(dm<=0||dm>=8)continue;
 sx=mx+SF*ch-SL[i]*sh;sy=my+SF*sh+SL[i]*ch;
 ra=mh+SD[i]*Math.PI/180;
 wl[i].push([sx+dm*Math.cos(ra),sy+dm*Math.sin(ra)]);
-if(wl[i].length>400)wl[i].shift();
-}
+if(wl[i].length>WLL)wl[i].shift();
+}}
 md=true;
 }
 
 function mD(){
-var c=Q('mC');if(!c)return;
+var c=Q('mC');if(!c||!mOn)return;
 var w=c.clientWidth,h=c.clientHeight;if(w<2)return;
 c.width=w;c.height=h;
 var ctx=c.getContext('2d'),ox=mo,oy=mn,i,j,p,p0,pl;
 ctx.fillStyle='#020617';ctx.fillRect(0,0,w,h);
 if(Q('mF').checked&&tr.length>0){ox=-(mx*ms);oy=my*ms}
 function tx(a,b){return[w/2+a*ms+ox,h/2-b*ms+oy]}
+// grid (skip in light mode)
+if(!mLi){
 ctx.strokeStyle='#1e293b';ctx.lineWidth=1;
 var gs=ms<50?1:ms<150?.5:.2;
 var x0=(-w/2-ox)/ms,x1=(w/2-ox)/ms,y0=(-h/2+oy)/ms,y1=(h/2+oy)/ms;
 for(var gx=Math.floor(x0/gs)*gs;gx<=x1;gx+=gs){p=tx(gx,0);ctx.beginPath();ctx.moveTo(p[0],0);ctx.lineTo(p[0],h);ctx.stroke()}
 for(var gy=Math.floor(y0/gs)*gs;gy<=y1;gy+=gs){p=tx(0,gy);ctx.beginPath();ctx.moveTo(0,p[1]);ctx.lineTo(w,p[1]);ctx.stroke()}
+}
+// walls (skip in light mode)
+if(!mLi){
 for(i=0;i<4;i++){ctx.fillStyle=SC[i];for(j=0;j<wl[i].length;j++){p=tx(wl[i][j][0],wl[i][j][1]);ctx.fillRect(p[0]-1.5,p[1]-1.5,3,3)}}
+}
+// trail
 if(tr.length>1){
 ctx.strokeStyle='#eab308';ctx.lineWidth=1.5;ctx.beginPath();
 p0=tx(tr[0][0],tr[0][1]);ctx.moveTo(p0[0],p0[1]);
@@ -411,11 +436,14 @@ var step=Math.max(1,Math.floor(tr.length/300));
 for(j=step;j<tr.length;j+=step){p=tx(tr[j][0],tr[j][1]);ctx.lineTo(p[0],p[1])}
 pl=tx(tr[tr.length-1][0],tr[tr.length-1][1]);ctx.lineTo(pl[0],pl[1]);ctx.stroke();
 }
+// car marker
 if(tr.length>0){
 var cp=tx(mx,my);
 ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cp[0],cp[1],5,0,6.283);ctx.fill();
 ctx.strokeStyle='#eab308';ctx.lineWidth=2;ctx.beginPath();
 ctx.moveTo(cp[0],cp[1]);ctx.lineTo(cp[0]+14*Math.cos(-mh),cp[1]+14*Math.sin(-mh));ctx.stroke();
+// sensor rays (skip in light mode)
+if(!mLi){
 var ch2=Math.cos(mh),sh2=Math.sin(mh);
 for(i=0;i<4;i++){
 var sx2=mx+SF*ch2-SL[i]*sh2,sy2=my+SF*sh2+SL[i]*ch2;
@@ -424,7 +452,7 @@ var sp2=tx(sx2,sy2),ep=tx(sx2+.5*Math.cos(ra2),sy2+.5*Math.sin(ra2));
 ctx.strokeStyle=SC[i];ctx.lineWidth=1;ctx.globalAlpha=.4;
 ctx.beginPath();ctx.moveTo(sp2[0],sp2[1]);ctx.lineTo(ep[0],ep[1]);ctx.stroke();
 ctx.globalAlpha=1;
-}}
+}}}
 Q('mP').textContent=mx.toFixed(2)+', '+my.toFixed(2);
 }
 

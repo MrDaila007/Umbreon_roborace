@@ -71,6 +71,7 @@ Increase delays on longer cars or tighter dead ends.
 | `IMU` | `USE_IMU` | `1` | Compile-time only. Set to `0` to disable IMU entirely (no `Wire.h` linked). |
 | `RCW` | `cfg_race_cw` | `1` | Set to `0` for counter-clockwise races. Changeable at runtime. |
 | `WDD` | `cfg_wrong_dir_deg` | `120.0` | Degrees of wrong-direction heading before recovery triggers. Lower = more sensitive (may false-trigger on tight hairpins). Higher = slower reaction. |
+| `IMR` | `cfg_imu_rotate` | `1` | Negate yaw rate for 180°-rotated IMU mounting. Set to `0` if IMU is mounted normally. |
 
 **Decay factor** (hardcoded `0.97`): correct-direction heading decays by 3 % per tick. At 25 Hz this halves in ~0.9 s. Increase toward `1.0` if you want the detector to remember longer history; decrease if tight corners cause false triggers.
 
@@ -86,14 +87,20 @@ Increase delays on longer cars or tighter dead ends.
 
 | Key | Variable | Default | Effect |
 |---|---|---|---|
-| `MSP` | `cfg_min_speed` | 96 | Minimum ESC PWM for forward (too low = no movement) |
-| `XSP` | `cfg_max_speed` | 110 | Maximum ESC PWM for forward (increase for more top speed) |
-| `BSP` | `cfg_min_bspeed` | 85 | Minimum ESC PWM for reverse |
+| `MSP` | `cfg_min_speed` | 1540 | Minimum ESC forward (µs). Use ESC min-speed slider in web UI to find the threshold where wheels just start spinning |
+| `XSP` | `cfg_max_speed` | 1700 | Maximum ESC forward (µs) |
+| `BSP` | `cfg_min_bspeed` | 1460 | Minimum ESC reverse (µs, below 1500 neutral) |
 | `MNP` | `cfg_min_point` | 40 | Maximum left steering angle (degrees) |
 | `XNP` | `cfg_max_point` | 140 | Maximum right steering angle (degrees) |
 | `NTP` | `cfg_neutral_point` | 90 | Straight-ahead servo angle |
 
-> Always verify ESC neutral (90°) matches your ESC calibration before driving.
+ESC uses `writeMicroseconds()` with range 1000–2000 µs, neutral at 1500 µs. Forward is above 1500, reverse is below 1500.
+
+> **ESC calibration** runs automatically on first boot (sends 2000→1000→1500 µs so the ESC learns its endpoints). The `CAL` flag in EEPROM tracks this. Use `$TEST:cal` to recalibrate, or `$SET:CAL=0` + `$SAVE` + reboot.
+
+> **Servo calibration** is done manually via the web UI wizard: step through min/max/neutral positions with +/- buttons, verify, and save to EEPROM.
+
+> **ESC min-speed calibration**: use the ESC slider in the web UI to find the exact µs value where wheels start moving, then Apply & Save.
 
 ---
 

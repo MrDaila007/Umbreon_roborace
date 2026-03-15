@@ -93,7 +93,7 @@ Dark theme. Charts use lightweight Canvas API (no external libraries). All zero-
 | `telemetry.py` | Thread-safe ring buffers (`deque(maxlen=2500)`) for all channels |
 | `plots.py` | 4 stacked matplotlib subplots, 10 Hz refresh, 250-sample rolling window |
 | `track_map.py` | Canvas-based dead-reckoning map with wall points, car trail, pan/zoom |
-| `settings_panel.py` | Scrollable grouped widgets for all 25 parameters. Car and file I/O buttons |
+| `settings_panel.py` | Scrollable grouped widgets for all 28 parameters. Car and file I/O buttons |
 
 ---
 
@@ -152,6 +152,7 @@ s3 R-Out   -45°     -90 mm (right)
 | Tachometer | `ENH` `WDM` |
 | Control Loop | `LMS` `SPD1` `SPD2` `COE1` `COE2` |
 | Navigation | `WDD` `RCW` `STK` |
+| Hardware | `IMR` `SVR` `CAL` |
 | Flags (read-only) | `IMU` `DBG` |
 
 ### Buttons
@@ -192,9 +193,9 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 | `KP` | PID Kp | float |
 | `KI` | PID Ki | float |
 | `KD` | PID Kd | float |
-| `MSP` | Min Speed (ESC) | int |
-| `XSP` | Max Speed (ESC) | int |
-| `BSP` | Min Reverse Speed | int |
+| `MSP` | Min Speed (µs, 1000–2000) | int |
+| `XSP` | Max Speed (µs) | int |
+| `BSP` | Min Reverse (µs) | int |
 | `MNP` | Min Steer Point | int |
 | `XNP` | Max Steer Point | int |
 | `NTP` | Neutral Steer Point | int |
@@ -208,6 +209,9 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 | `WDD` | Wrong Dir Degrees | float |
 | `RCW` | Race Clockwise (0/1) | int |
 | `STK` | Stuck Threshold (ticks) | int |
+| `IMR` | IMU Rotated 180° (0/1) | int |
+| `SVR` | Servo Reverse (0/1) | int |
+| `CAL` | ESC Calibrated (0/1) | int |
 | `IMU` | IMU Enabled (read-only) | int |
 | `DBG` | WiFi Debug Enabled (read-only) | int |
 
@@ -218,9 +222,9 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 Settings are stored as a packed `CarSettings` struct at EEPROM address 0:
 
 - **Magic**: `0x554D4252` ("UMBR")
-- **Version**: 1
+- **Version**: 3
 - **Checksum**: sum of all preceding bytes (uint8)
-- **Size**: ~42 bytes
+- **Size**: ~50 bytes
 
 On boot, `load_settings()` reads EEPROM and validates magic + version + checksum. If valid, globals are populated from the stored values. If invalid (first boot, or corrupted), compile-time defaults are used.
 

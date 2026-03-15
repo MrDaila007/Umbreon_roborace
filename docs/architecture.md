@@ -88,13 +88,14 @@ Output is clamped to `[0, 100]` — only forward correction, braking is handled 
 Both the steering servo and motor ESC use the Servo library (PWM).
 
 **Steering** (`write_steer(s)`, s ∈ [-1000, 1000]):
-- Maps to servo angle [40°, 140°], neutral 90°
-- Input is inverted so positive = right
+- Maps to servo angle [MNP, XNP], neutral NTP (default 40°–140°, neutral 90°)
+- Input is inverted when `SVR=1` (configurable servo reverse)
 
 **ESC** (`write_speed(s)`, s ∈ [-1000, 1000]):
-- Forward: mapped to [96°, 110°] PWM angle
-- Reverse: mapped to [0°, 85°]
-- Neutral/brake: 90°
+- Uses `writeMicroseconds()` — range 1000–2000 µs, neutral 1500 µs
+- Forward: mapped to [MSP, XSP] µs (default 1540–1700)
+- Reverse: mapped to [1000, BSP] µs (default 1000–1460)
+- Neutral/brake: 1500 µs
 
 ---
 
@@ -126,7 +127,7 @@ I2C1 at 400 kHz. Only the **gyro Z-axis** is read (registers `0x47`–`0x48`).
 | `reset_heading()` | Zeroes `heading` accumulator. Called after every recovery manoeuvre. |
 
 **Members:**
-- `yaw_rate` — latest gyro Z reading in °/s (positive = counter-clockwise)
+- `yaw_rate` — latest gyro Z reading in °/s (positive = counter-clockwise). Negated when `IMR=1` (IMU mounted 180° rotated)
 - `heading` — cumulative heading change in degrees since last reset
 
 All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU entirely from the binary (no `Wire.h` overhead).
@@ -212,7 +213,7 @@ All tuning parameters (obstacle thresholds, PID gains, ESC/steering limits, spee
 ### EEPROM layout
 
 A packed `CarSettings` struct at address 0 (~42 bytes):
-- Magic `0x554D4252` ("UMBR"), version byte, all parameters, trailing checksum
+- Magic `0x554D4252` ("UMBR"), version 3, all parameters, trailing checksum
 - `load_settings()` in `setup()` validates magic + version + checksum before applying
 - `save_settings()` populates struct, computes checksum, writes via `EEPROM.put()` + `commit()`
 
@@ -228,6 +229,9 @@ ASCII over the existing WiFi TCP bridge. Processed in `loop()` via `process_comm
 | `$SAVE` | `$ACK` | Persist to EEPROM |
 | `$LOAD` | `$ACK` / `$NAK` | Restore from EEPROM |
 | `$RST` | `$ACK` | Reset to compile-time defaults |
+| `$SRV:<angle>` | *(none)* | Direct servo write (0–180°) for calibration |
+| `$ESC:<us>` | *(none)* | Direct ESC write (1000–2000 µs) for calibration |
+| `$TEST:cal` | `$T:CAL,...` / `$TDONE:cal` | Run ESC calibration (max→min→neutral) |
 
 See [dashboard.md](dashboard.md) for the full key table and dashboard usage.
 

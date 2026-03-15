@@ -289,15 +289,33 @@ WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'C
 var FL={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1};
 var BL={RCW:1,IMR:1,SVR:1,CAL:1,IMU:1,DBG:1};
 var RO={IMU:1,DBG:1},OR={};
+var GR=[
+['\u26a0 Obstacles','FOD','SOD','ACD','CFD'],
+['\u23f1 Speed','SPD1','SPD2','MSP','XSP','BSP'],
+['\u2699 PID','KP','KI','KD'],
+['\u21c4 Steering','MNP','XNP','NTP','COE1','COE2'],
+['\u23f2 Loop','LMS','STK','WDD'],
+['\u2638 Encoder','ENH','WDM'],
+['\u2611 Flags','RCW','IMR','SVR','CAL','IMU','DBG']
+];
 
 function pC(cfg){
 var el=Q('P');el.innerHTML='';OR={};
-var ps=cfg.split(','),i,kv,k,v,d,lb,inp;
-for(i=0;i<ps.length;i++){
-kv=ps[i].split('=');if(kv.length<2)continue;
-k=kv[0];v=kv[1];OR[k]=v;
-d=document.createElement('div');d.className='pi';
-lb=document.createElement('label');lb.textContent=LB[k]||k;lb.title=k;
+var vals={},ps=cfg.split(','),i,kv;
+for(i=0;i<ps.length;i++){kv=ps[i].split('=');if(kv.length>=2){vals[kv[0]]=kv[1];OR[kv[0]]=kv[1]}}
+for(var g=0;g<GR.length;g++){
+var grp=GR[g],name=grp[0];
+var hdr=document.createElement('div');
+hdr.style.cssText='grid-column:1/-1;font-size:11px;font-weight:600;color:#94a3b8;padding:6px 0 2px;border-top:1px solid #334155;margin-top:4px';
+if(g===0)hdr.style.borderTop='none';
+hdr.textContent=name;
+el.appendChild(hdr);
+for(var j=1;j<grp.length;j++){
+var k=grp[j],v=vals[k];
+if(v===undefined)continue;
+var d=document.createElement('div');d.className='pi';
+var lb=document.createElement('label');lb.textContent=LB[k]||k;lb.title=k;
+var inp;
 if(BL[k]){
 inp=document.createElement('input');inp.type='checkbox';inp.id='p_'+k;inp.checked=parseInt(v)!==0;
 inp.style.cssText='width:20px;height:20px;accent-color:#3b82f6';
@@ -307,7 +325,7 @@ inp.step=FL[k]?'0.01':'1';
 }
 if(RO[k])inp.disabled=true;
 d.appendChild(lb);d.appendChild(inp);el.appendChild(d);
-}
+}}
 var mnp=Q('p_MNP'),xnp=Q('p_XNP'),ntp=Q('p_NTP');
 if(mnp){cm=parseInt(mnp.value);Q('cMn').textContent=cm}
 if(xnp){cx=parseInt(xnp.value);Q('cMx').textContent=cx}

@@ -27,9 +27,9 @@ DEFAULTS = {
     "SOD":  1000,     # SIDE_OPEN_DIST
     "ACD":   800,     # ALL_CLOSE_DIST
     "CFD":   201,     # CLOSE_FRONT_DIST
-    "KP":    4.18,    # PID_KP
-    "KI":    2.93,    # PID_KI
-    "KD":    0.43,    # PID_KD
+    "KP":   60.0,     # PID_KP (scaled for µs ESC output)
+    "KI":   40.0,     # PID_KI
+    "KD":    6.0,     # PID_KD
     "MSP":  1540,     # MIN_SPEED (µs)
     "XSP":  1700,     # MAX_SPEED (µs)
     "BSP":  1460,     # MIN_BSPEED (µs)

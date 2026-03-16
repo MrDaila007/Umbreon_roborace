@@ -41,10 +41,10 @@ int   cfg_side_open_dist      = 1000;   // 100 cm — side is "open"
 int   cfg_all_close_dist      =  800;   //  80 cm — surrounded, force turn
 int   cfg_close_front_dist    =  201;   //  20 cm — emergency reverse
 
-// PID coefficients (Tyreus-Luyben auto-tuned: Ku=9.20, Tu=0.648s)
-float cfg_pid_kp   = 4.18f;
-float cfg_pid_ki   = 2.93f;
-float cfg_pid_kd   = 0.43f;
+// PID coefficients (scaled for µs ESC output, ~14× from original degree-based gains)
+float cfg_pid_kp   = 60.0f;
+float cfg_pid_ki   = 40.0f;
+float cfg_pid_kd   = 6.0f;
 
 // ESC limits (µs, 1000–2000, neutral 1500)
 int   cfg_min_speed   = 1540;  // slowest forward (µs)
@@ -387,9 +387,9 @@ static void cmd_rst() {
     cfg_side_open_dist      = 1000;
     cfg_all_close_dist      =  800;
     cfg_close_front_dist    =  201;
-    cfg_pid_kp   = 4.18f;
-    cfg_pid_ki   = 2.93f;
-    cfg_pid_kd   = 0.43f;
+    cfg_pid_kp   = 60.0f;
+    cfg_pid_ki   = 40.0f;
+    cfg_pid_kd   = 6.0f;
     cfg_min_speed   = 1540;
     cfg_max_speed   = 1700;
     cfg_min_bspeed  = 1460;

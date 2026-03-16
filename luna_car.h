@@ -238,18 +238,18 @@ void Car::pid_control_motor() {
     float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
                       (3.14159265f * cfg_wheel_diam_m) / dt;
 
-    // EMA filter
-    pid_filtered = 0.5f * raw_speed + 0.5f * pid_filtered;
+    // EMA filter (0.7 = responsive, 0.3 = smooth)
+    pid_filtered = 0.7f * raw_speed + 0.3f * pid_filtered;
     if ((micros() - last) > 500000UL) pid_filtered = 0;
 
-    // PID
+    // PID (gains operate in µs domain: output is µs offset from feedforward)
     float error = target_speed - pid_filtered;
     pid_integral += error * dt;
-    pid_integral = constrain(pid_integral, -5.0f, 5.0f);
+    pid_integral = constrain(pid_integral, -50.0f, 50.0f);
     float deriv = (error - pid_prev_error) / dt;
     pid_prev_error = error;
 
-    // feedforward: motor dead zone below cfg_min_speed
+    // feedforward: jump past motor dead zone, then PID corrects from there
     float ff = (target_speed > 0.01f) ? (float)(cfg_min_speed - NEUTRAL_SPEED) : 0;
     float output = ff + cfg_pid_kp * error + cfg_pid_ki * pid_integral + cfg_pid_kd * deriv;
 

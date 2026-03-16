@@ -35,6 +35,7 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
 - **ESP32-S3**: FQBN `esp32:esp32:esp32s3`, libraries: ESP32Servo, WebSockets (Markus Sattler), VL53L0X (Pololu)
 - ESP32-S3 uses 6× VL53L0X ToF sensors via I2C with XSHUT-based address assignment (0x30–0x35)
+- ESP32-S3 WiFi credentials: copy `wifi_config_example.h` → `wifi_config.h` (git-ignored); defaults to AP mode if absent
 
 ## Linting & CI
 
@@ -77,11 +78,25 @@ ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
 
 **Platform selection**: automatic via `hw_config.h` based on board package. The `HAS_TELEM` flag replaces `USE_WIFI_DEBUG` as the unified telemetry guard.
 
-### Firmware (`Umbreon_roborace.ino` + `luna_car.h` / `hw_esp32s3.h`)
+### Firmware file layout
 
-- **40 ms control loop** in `work()`: read LiDARs → IMU → steering logic → speed logic → PID → telemetry output → stuck/wrong-direction detection
+| File | Purpose |
+|---|---|
+| `Umbreon_roborace.ino` | Feature flags, includes, setup(), loop() |
+| `hw_config.h` | Platform auto-detection (`PLATFORM_RP2350` / `PLATFORM_ESP32S3`) |
+| `config.h` | Runtime-configurable `cfg_*` parameters + state globals |
+| `luna_car.h` | RP2350 hardware layer — SerialPIO LiDAR, Servo, PID, IMU |
+| `hw_esp32s3.h` | ESP32-S3 hardware layer — VL53L0X I2C, WiFi, ESP32Servo, PID, IMU |
+| `eeprom_settings.h` | EEPROM persistence — CarSettings struct, load/save |
+| `control.h` | Autonomous driving logic — work(), go_back, stuck/wrong-direction detection |
+| `wifi_tests.h` | WiFi remote test routines (lidar, servo, esc, autotune, etc.) |
+| `commands.h` | Command protocol — parse/dispatch, idle telemetry, ESC calibration |
+| `tests.h` | Serial console hardware tests (USB, for bench debugging) |
+| `wifi_config_example.h` | WiFi credentials template — copy to `wifi_config.h` (git-ignored) |
+
+- **40 ms control loop** in `work()` (`control.h`): read sensors → IMU → steering logic → speed logic → PID → telemetry output → stuck/wrong-direction detection
 - `luna_car.h` (RP2350) / `hw_esp32s3.h` (ESP32-S3): hardware abstraction layer with identical Car class interface
-- `tests.h` provides diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
+- `tests.h` provides serial diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
 - **Start/Stop**: car boots stopped by default; `$START`/`$STOP` control driving; idle telemetry streams sensor data when stopped
 - **Remote tests**: 8 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)
 - All distances are in **cm×10** units (e.g., 1200 = 120.0 cm)

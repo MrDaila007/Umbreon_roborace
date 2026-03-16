@@ -22,10 +22,17 @@ ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Dashboard / ROS2
 
 | File | Role |
 |---|---|
+| `Umbreon_roborace.ino` | Entry point — feature flags, includes, setup(), loop() |
 | `hw_config.h` | Platform auto-detection (`PLATFORM_RP2350` / `PLATFORM_ESP32S3`) |
+| `config.h` | Runtime-configurable `cfg_*` parameters + state globals |
 | `luna_car.h` | RP2350 hardware layer — SerialPIO LiDAR, Servo, PID, IMU |
 | `hw_esp32s3.h` | ESP32-S3 hardware layer — 6× VL53L0X I2C, WiFi, ESP32Servo, PID, IMU |
-| `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol (shared) |
+| `eeprom_settings.h` | EEPROM persistence — CarSettings struct, checksum, load/save |
+| `control.h` | Autonomous driving — work(), go_back, stuck/wrong-direction detection |
+| `wifi_tests.h` | WiFi remote test routines (lidar, servo, esc, autotune, etc.) |
+| `commands.h` | Command protocol — parse/dispatch, idle telemetry, ESC calibration |
+| `tests.h` | Serial console hardware tests (USB bench debugging) |
+| `wifi_config_example.h` | WiFi credentials template (copy to `wifi_config.h`, git-ignored) |
 | `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge (RP2350 only) |
 | `dashboard/` | Python app — live plots, track map, remote settings editor |
 
@@ -219,7 +226,7 @@ The ESP32-S3 runs its own WiFi AP and web server (same AP name "Umbreon", passwo
 - **Port 81**: WebSocket — real-time bidirectional relay
 - **Port 23**: Raw TCP — backward compat with Python dashboard / ROS2 bridge
 
-WiFi also supports **STA mode** (join existing network) with AP fallback.
+WiFi also supports **STA mode** (join existing network) with AP fallback. WiFi credentials are configured by copying `wifi_config_example.h` → `wifi_config.h` (git-ignored). If the file doesn't exist, safe defaults are used (AP mode, SSID "Umbreon", password "12345678").
 
 ### TelemetryStream
 
@@ -254,7 +261,23 @@ This allows all `telem.print()` calls in `Umbreon_roborace.ino` to work identica
 
 ---
 
-## Umbreon_roborace.ino — Control Logic
+## Firmware Modules
+
+The firmware is split across several `.h` files included from `Umbreon_roborace.ino` in this order:
+
+```
+Umbreon_roborace.ino
+├── hw_config.h            // platform detection
+├── config.h               // cfg_* globals + state
+├── luna_car.h / hw_esp32s3.h  // hardware abstraction (Car class)
+├── tests.h                // serial console tests
+├── eeprom_settings.h      // EEPROM load/save
+├── control.h              // driving AI (work, go_back)
+├── wifi_tests.h           // WiFi remote tests
+└── commands.h             // protocol, calibration, idle telemetry
+```
+
+All files share one compilation unit (Arduino single-.ino model), so globals defined in earlier includes are visible to later ones.
 
 ### Main loop
 
@@ -330,7 +353,7 @@ When triggered:
 
 All tuning parameters (obstacle thresholds, PID gains, ESC/steering limits, speed coefficients, etc.) are stored as `cfg_*` global variables with compile-time defaults. They can be changed at runtime via the command protocol and persisted to EEPROM.
 
-`luna_car.h` declares them as `extern`; `Umbreon_roborace.ino` defines and initialises them.
+`config.h` defines all `cfg_*` globals with defaults. Hardware layers (`luna_car.h`, `hw_esp32s3.h`) declare them as `extern`. EEPROM persistence lives in `eeprom_settings.h`.
 
 ### EEPROM layout
 
@@ -341,7 +364,7 @@ A packed `CarSettings` struct at address 0 (~60 bytes):
 
 ### Command protocol
 
-ASCII over the existing WiFi TCP bridge. Processed in `loop()` via `process_commands()`.
+ASCII over the existing WiFi TCP bridge. Processed in `loop()` via `process_commands()` (defined in `commands.h`).
 
 | Command | Response | Description |
 |---|---|---|

@@ -453,6 +453,10 @@ static void wifi_test_lidar() {
         telem.print(",FL=");        telem.print(s[1]);
         telem.print(",FR=");        telem.print(s[2]);
         telem.print(",R=");         telem.print(s[3]);
+#if PLATFORM_ESP32S3
+        telem.print(",F=");         telem.print(s[4]);
+        telem.print(",RE=");        telem.print(s[5]);
+#endif
         telem.println();
         delay(100);
     }
@@ -774,6 +778,13 @@ static void wifi_test_reactive() {
         float diff = (float)(R - L);
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+#if PLATFORM_ESP32S3
+        int F = s[4];
+        if (F < CLOSE_DIST) {
+            // Front blocked — bias toward the more open side
+            diff += (float)(FR - FL) * 0.5f;
+        }
+#endif
 
         float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
         int steer_val = (int)(steer_f * 1000.0f);
@@ -783,6 +794,10 @@ static void wifi_test_reactive() {
         telem.print(",FL=");         telem.print(FL);
         telem.print(",FR=");         telem.print(FR);
         telem.print(",R=");          telem.print(R);
+#if PLATFORM_ESP32S3
+        telem.print(",F=");          telem.print(F);
+        telem.print(",RE=");         telem.print(s[5]);
+#endif
         telem.print(",steer=");      telem.print(steer_val);
         telem.println();
         delay(50);
@@ -932,6 +947,10 @@ static void send_idle_telemetry() {
     telem.print(s[1]);                  telem.print(',');
     telem.print(s[2]);                  telem.print(',');
     telem.print(s[3]);                  telem.print(',');
+#if PLATFORM_ESP32S3
+    telem.print(s[4]);                  telem.print(',');
+    telem.print(s[5]);                  telem.print(',');
+#endif
     telem.print(0);                     telem.print(',');
     telem.print(get_speed(), 2);        telem.print(',');
     telem.print(0.0, 1);
@@ -1016,6 +1035,9 @@ void work() {
     int diff;
     bool f_l = s[1] < cfg_front_obstacle_dist;  // front-left blocked
     bool f_r = s[2] < cfg_front_obstacle_dist;  // front-right blocked
+#if PLATFORM_ESP32S3
+    bool f_c = s[4] < cfg_front_obstacle_dist;  // front-center blocked
+#endif
 
     if (s[0] > cfg_side_open_dist && s[3] > cfg_side_open_dist) {
         // Both sides open — keep to right wall
@@ -1032,7 +1054,11 @@ void work() {
     }
 
     // ── Speed ─────────────────────────────────────────────────────────────────
+#if PLATFORM_ESP32S3
+    int how_clear = (int)f_l + (int)f_r + (int)f_c;  // 0 = path clear, 1-3 = blocked
+#else
     int how_clear = (int)f_l + (int)f_r;  // 0 = path clear, 1-2 = blocked
+#endif
     float coef, spd;
 
     switch (how_clear) {
@@ -1053,6 +1079,10 @@ void work() {
     telem.print(s[1]);                  telem.print(',');
     telem.print(s[2]);                  telem.print(',');
     telem.print(s[3]);                  telem.print(',');
+#if PLATFORM_ESP32S3
+    telem.print(s[4]);                  telem.print(',');
+    telem.print(s[5]);                  telem.print(',');
+#endif
     telem.print((int)(diff * coef));    telem.print(',');
     telem.print(get_speed(), 2);        telem.print(',');
     telem.print(spd, 1);
@@ -1159,7 +1189,11 @@ void setup() {
     wifi_setup();
 #endif
 #if HAS_TELEM
-    telem.println("#ms,s0,s1,s2,s3,steer,speed,target"
+    telem.println("#ms,s0,s1,s2,s3,"
+#if PLATFORM_ESP32S3
+                    "s4,s5,"
+#endif
+                    "steer,speed,target"
 #if USE_IMU
                     ",yaw,heading"
 #endif
@@ -1216,6 +1250,10 @@ void loop() {
             telem.print(s[1]);                  telem.print(',');
             telem.print(s[2]);                  telem.print(',');
             telem.print(s[3]);                  telem.print(',');
+#if PLATFORM_ESP32S3
+            telem.print(s[4]);                  telem.print(',');
+            telem.print(s[5]);                  telem.print(',');
+#endif
             telem.print(manual_steer);          telem.print(',');
             telem.print(get_speed(), 2);        telem.print(',');
             telem.print(manual_speed, 1);

@@ -33,15 +33,15 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
 - WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
 - WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
-- **ESP32-S3** (planned): FQBN `esp32:esp32:esp32s3`, libraries: ESP32Servo, WebSockets (Markus Sattler)
-- ESP32-S3 uses I2C for TF-Luna (addresses 0x10–0x13) instead of SerialPIO UART
+- **ESP32-S3**: FQBN `esp32:esp32:esp32s3`, libraries: ESP32Servo, WebSockets (Markus Sattler), VL53L0X (Pololu)
+- ESP32-S3 uses 6× VL53L0X ToF sensors via I2C with XSHUT-based address assignment (0x30–0x35)
 
 ## Linting & CI
 
 CI runs on push/PR via `.github/workflows/ci.yml`:
 - **Python lint**: `ruff check dashboard/ simulation/` (config in `ruff.toml`)
 - **C++ static analysis**: `cppcheck` on firmware files
-- **Firmware compile**: arduino-cli build for `rp2040:rp2040:rpipico2`
+- **Firmware compile**: arduino-cli build for `rp2040:rp2040:rpipico2` and `esp32:esp32:esp32s3`
 - **Python imports**: verifies all dashboard/sim modules import cleanly
 - **ROS2 build**: Docker image build with colcon
 
@@ -63,16 +63,17 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:
 - WiFi bridge: separate `wifi_debug/wifi_debug.ino` firmware on ESP8266
 - Telemetry output: `telem` macro → `Serial1` (UART to ESP8266)
 
-**Platform B — ESP32-S3 (planned, single-chip):**
+**Platform B — ESP32-S3 (single-chip):**
 ```
 ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
    (C++)            ├─ HTTP:80 ─▶ Built-in Web UI (phone)
    WiFi built-in    └─ WS:81 ──▶ Built-in Web UI (real-time)
 ```
-- Hardware layer: `hw_esp32s3.h` (I2C for LiDAR, ESP32Servo, built-in WiFi)
+- Hardware layer: `hw_esp32s3.h` (6× VL53L0X via I2C, ESP32Servo, built-in WiFi)
 - No separate bridge needed — WiFi servers run on same chip
 - Telemetry output: `telem` macro → `TelemetryStream` (broadcasts to WiFi clients)
-- TF-Luna sensors must be pre-configured for I2C mode with unique addresses (0x10–0x13)
+- 6× VL53L0X ToF sensors with XSHUT-based address assignment (0x30–0x35) — no manual pre-configuration needed
+- Sensor layout: s[0]=Left, s[1]=FL, s[2]=FR, s[3]=Right, s[4]=Front, s[5]=Rear
 
 **Platform selection**: automatic via `hw_config.h` based on board package. The `HAS_TELEM` flag replaces `USE_WIFI_DEBUG` as the unified telemetry guard.
 
@@ -140,10 +141,11 @@ Tests auto-stop the car. Send `$STOP` to abort a running test.
 ## Telemetry Format (CSV, 25 Hz)
 
 ```
-#ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]
+#ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]        (RP2350, 4 sensors)
+#ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]  (ESP32-S3, 6 sensors)
 ```
 
-8 fields without IMU, 10 with IMU. Sensors s0–s3 are in cm×10.
+RP2350: 8 fields without IMU, 10 with IMU. ESP32-S3: 10 fields without IMU, 12 with IMU. Sensors are in cm×10.
 
 ## Key Constants
 

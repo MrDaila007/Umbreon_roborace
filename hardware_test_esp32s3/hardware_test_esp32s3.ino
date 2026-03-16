@@ -9,7 +9,7 @@
  * and open http://192.168.4.1 (web dashboard) or TCP 192.168.4.1:23.
  *
  * Commands:
- *   l  — LiDAR stream (continuous, all 4 sensors via I2C)
+ *   l  — LiDAR stream (continuous, all 6 VL53L0X sensors via I2C)
  *   s  — Servo sweep
  *   t  — Tachometer live (spin wheel by hand)
  *   e  — ESC arm + minimal forward pulse (2 s, then stop)
@@ -17,14 +17,14 @@
  *   u  — PID auto-tune (relay method, ~30 s)
  *   r  — Reactive steering (LiDAR → servo)
  *   i  — IMU test (gyro Z bias + live yaw/heading)
- *   c  — I2C bus scan (find LiDAR addresses + IMU)
+ *   c  — I2C bus scan (find sensor addresses + IMU)
  *   a  — Run all tests in sequence
  *   ?  — Print this help
  *
- * TF-Luna I2C setup:
- *   Each sensor must be pre-configured for I2C mode with a unique address.
- *   Default addresses: Left=0x10, Front-Left=0x11, Front-Right=0x12, Right=0x13
- *   Run the I2C scan test (c) to verify sensor addresses.
+ * VL53L0X wiring:
+ *   All 6 sensors share I2C bus (SDA/SCL).  Each has an XSHUT pin.
+ *   Addresses assigned automatically at boot via XSHUT sequencing.
+ *   Layout: [0]=Left, [1]=FL, [2]=FR, [3]=Right, [4]=Front, [5]=Rear
  */
 
 #pragma GCC optimize("Ofast")
@@ -34,6 +34,7 @@
 #include <WebSocketsServer.h>
 #include <ESP32Servo.h>
 #include <Wire.h>
+#include <VL53L0X.h>
 
 // Web UI (shared with ESP8266 version)
 #include "../wifi_debug/web_ui.h"
@@ -49,12 +50,14 @@
 #define TAHO_PIN        13
 #define STATUS_LED_PIN   2
 
-// ─── TF-Luna I2C addresses ────────────────────────────────────────────────
-// Each sensor must have a unique address. Use test 'c' (I2C scan) to verify.
-static const uint8_t LIDAR_ADDR[4] = {0x10, 0x11, 0x12, 0x13};
-static const char*   LIDAR_NAME[4] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
-static bool          lidar_ok[4]   = {false, false, false, false};
-static uint16_t      lidar_cm[4]   = {0, 0, 0, 0};
+// ─── VL53L0X sensors ────────────────────────────────────────────────────────
+#define NUM_TOF  6
+static const uint8_t XSHUT_PINS[NUM_TOF] = {4, 5, 6, 7, 12, 14};
+static const uint8_t TOF_ADDR[NUM_TOF]   = {0x30, 0x31, 0x32, 0x33, 0x34, 0x35};
+static const char*   LIDAR_NAME[NUM_TOF]  = {"Left    ", "FrontL  ", "FrontR  ", "Right   ", "Front   ", "Rear    "};
+static VL53L0X       tof_sensor[NUM_TOF];
+static bool          lidar_ok[NUM_TOF]   = {};
+static uint16_t      lidar_cm[NUM_TOF]   = {};
 
 // ─── IMU ───────────────────────────────────────────────────────────────────
 #if USE_IMU
@@ -312,22 +315,37 @@ static void wifi_send_line(const char* line) {
     wsServer.broadcastTXT(line, len);
 }
 
-// ─── TF-Luna I2C read ────────────────────────────────────────────────────
-static uint16_t read_lidar_i2c(uint8_t addr) {
-    Wire.beginTransmission(addr);
-    Wire.write(0x00);
-    if (Wire.endTransmission(false) != 0) return 0;
-    if (Wire.requestFrom(addr, (uint8_t)2) != 2) return 0;
-    uint16_t dist = Wire.read();
-    dist |= (uint16_t)Wire.read() << 8;
-    return dist;   // cm
+// ─── VL53L0X XSHUT address assignment ─────────────────────────────────────
+void init_tof_sensors() {
+    for (int i = 0; i < NUM_TOF; i++) {
+        pinMode(XSHUT_PINS[i], OUTPUT);
+        digitalWrite(XSHUT_PINS[i], LOW);
+    }
+    delay(10);
+
+    for (int i = 0; i < NUM_TOF; i++) {
+        digitalWrite(XSHUT_PINS[i], HIGH);
+        delay(10);
+        tof_sensor[i].setTimeout(500);
+        if (!tof_sensor[i].init()) {
+            lidar_ok[i] = false;
+            Serial.print("VL53L0X "); Serial.print(i); Serial.println(" init failed");
+            continue;
+        }
+        tof_sensor[i].setAddress(TOF_ADDR[i]);
+        tof_sensor[i].setMeasurementTimingBudget(33000);
+        tof_sensor[i].startContinuous();
+        lidar_ok[i] = true;
+    }
 }
 
 void poll_all_lidars() {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUM_TOF; i++) {
         if (!lidar_ok[i]) continue;
-        uint16_t d = read_lidar_i2c(LIDAR_ADDR[i]);
-        if (d > 0) lidar_cm[i] = d;
+        uint16_t d = tof_sensor[i].readRangeContinuousMillimeters();
+        if (!tof_sensor[i].timeoutOccurred() && d < 8190) {
+            lidar_cm[i] = d / 10;   // mm → cm for display
+        }
     }
 }
 
@@ -392,13 +410,14 @@ void test_i2c_scan() {
             out.print("  ");
 
             // Identify known devices
-            if (addr >= 0x10 && addr <= 0x13) {
-                int idx = addr - 0x10;
-                out.print("TF-Luna LiDAR [");
+            if (addr >= 0x30 && addr <= 0x35) {
+                int idx = addr - 0x30;
+                out.print("VL53L0X [");
                 out.print(idx);
                 out.print("] ");
                 out.print(LIDAR_NAME[idx]);
             }
+            else if (addr == 0x29) out.print("VL53L0X (default addr)");
             else if (addr == 0x68 || addr == 0x69) out.print("MPU-6050 IMU");
             else if (addr == 0x53) out.print("ADXL345 Accelerometer");
             else if (addr == 0x76 || addr == 0x77) out.print("BMP280/BME280");
@@ -420,14 +439,14 @@ void test_i2c_scan() {
         out.println(" device(s) found.");
     }
 
-    // Check expected LiDARs
-    out.println("\nExpected LiDAR addresses:");
-    for (int i = 0; i < 4; i++) {
+    // Check expected VL53L0X sensors
+    out.println("\nExpected VL53L0X addresses:");
+    for (int i = 0; i < NUM_TOF; i++) {
         out.print("  ");
         out.print(LIDAR_NAME[i]);
         out.print(" 0x");
-        if (LIDAR_ADDR[i] < 16) out.print("0");
-        out.print(LIDAR_ADDR[i], HEX);
+        if (TOF_ADDR[i] < 16) out.print("0");
+        out.print(TOF_ADDR[i], HEX);
         out.print("  ");
         out.println(lidar_ok[i] ? "OK" : "NOT FOUND");
     }
@@ -447,7 +466,7 @@ void test_lidar(unsigned long duration_ms = 0) {
         poll_all_lidars();
         wifi_loop_tick();
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < NUM_TOF; i++) {
             out.print(LIDAR_NAME[i]);
             out.print(" | ");
             if (lidar_ok[i] && lidar_cm[i] > 0) {
@@ -826,10 +845,12 @@ void test_reactive(unsigned long duration_ms = 0) {
         int FL = (lidar_ok[1] && lidar_cm[1] > 0) ? lidar_cm[1] : 999;
         int FR = (lidar_ok[2] && lidar_cm[2] > 0) ? lidar_cm[2] : 999;
         int R  = (lidar_ok[3] && lidar_cm[3] > 0) ? lidar_cm[3] : 999;
+        int F  = (lidar_ok[4] && lidar_cm[4] > 0) ? lidar_cm[4] : 999;
 
         float diff = (float)(R - L);
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+        if (F < CLOSE_DIST)  diff += (float)(FR - FL) * 0.5f;
 
         float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
 
@@ -842,6 +863,7 @@ void test_reactive(unsigned long duration_ms = 0) {
 
         out.print("  L="); out.print(L);
         out.print("  FL="); out.print(FL);
+        out.print("  F=");  out.print(F);
         out.print("  FR="); out.print(FR);
         out.print("  R="); out.print(R);
         out.print("  -> servo="); out.print(servo_val);
@@ -1026,14 +1048,14 @@ static char proto_cmd[64];
 static int proto_cmd_len = 0;
 
 static void wifi_send_telemetry() {
-    int s0 = (lidar_ok[0] && lidar_cm[0] > 0) ? lidar_cm[0] * 10 : 0;
-    int s1 = (lidar_ok[1] && lidar_cm[1] > 0) ? lidar_cm[1] * 10 : 0;
-    int s2 = (lidar_ok[2] && lidar_cm[2] > 0) ? lidar_cm[2] * 10 : 0;
-    int s3 = (lidar_ok[3] && lidar_cm[3] > 0) ? lidar_cm[3] * 10 : 0;
+    int sv[NUM_TOF];
+    for (int i = 0; i < NUM_TOF; i++)
+        sv[i] = (lidar_ok[i] && lidar_cm[i] > 0) ? lidar_cm[i] * 10 : 0;
 
     int len = snprintf(telem_line, sizeof(telem_line),
-        "%lu,%d,%d,%d,%d,%d,%.2f,%.1f",
-        millis(), s0, s1, s2, s3, drv_steer, get_speed(), drv_speed);
+        "%lu,%d,%d,%d,%d,%d,%d,%d,%.2f,%.1f",
+        millis(), sv[0], sv[1], sv[2], sv[3], sv[4], sv[5],
+        drv_steer, get_speed(), drv_speed);
 #if USE_IMU
     if (imu_telem_ok) {
         len += snprintf(telem_line + len, sizeof(telem_line) - len,
@@ -1144,11 +1166,8 @@ void setup() {
     pinMode(TAHO_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(TAHO_PIN), taho_isr, RISING);
 
-    // Probe LiDAR sensors
-    for (int i = 0; i < 4; i++) {
-        Wire.beginTransmission(LIDAR_ADDR[i]);
-        lidar_ok[i] = (Wire.endTransmission() == 0);
-    }
+    // VL53L0X sensors — XSHUT address assignment + continuous ranging
+    init_tof_sensors();
 
     // IMU for telemetry
 #if USE_IMU
@@ -1162,8 +1181,8 @@ void setup() {
 
     // Report LiDAR status
     int lidar_found = 0;
-    for (int i = 0; i < 4; i++) if (lidar_ok[i]) lidar_found++;
-    out.print("  LiDAR: "); out.print(lidar_found); out.println("/4 found");
+    for (int i = 0; i < NUM_TOF; i++) if (lidar_ok[i]) lidar_found++;
+    out.print("  ToF:   "); out.print(lidar_found); out.print("/"); out.print(NUM_TOF); out.println(" found");
 #if USE_IMU
     out.print("  IMU:   ");
     out.println(imu_telem_ok ? "MPU-6050 OK" : "not found");

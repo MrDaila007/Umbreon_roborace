@@ -104,6 +104,7 @@ jobs:
           arduino-cli core install esp32:esp32
           arduino-cli lib install "ESP32Servo"
           arduino-cli lib install "WebSockets"
+          arduino-cli lib install "VL53L0X"
 
       - name: Compile firmware (ESP32-S3)
         run: arduino-cli compile -b esp32:esp32:esp32s3 .

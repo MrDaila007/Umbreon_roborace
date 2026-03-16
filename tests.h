@@ -21,12 +21,12 @@ static char _wait_key(Car& car) {
 
 // ─── LiDAR diagnostics ─────────────────────────────────────────────────────
 
-// Print all 4 LiDAR distances to Serial (cm×10 units).
+// Print all sensor distances to Serial (cm×10 units).
 void print_sensors(Car& car) {
     car.poll_lidars();
     int* s = car.read_sensors();
-    const char* labels[4] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
-    for (int i = 0; i < 4; i++) {
+    const char* labels[] = {"Left    ", "FrontL  ", "FrontR  ", "Right   ", "Front   ", "Rear    "};
+    for (int i = 0; i < car.sensor_amount; i++) {
         Serial.print(labels[i]);
         Serial.print(": ");
         if (s[i] == 9999) {
@@ -39,13 +39,13 @@ void print_sensors(Car& car) {
     Serial.println("--------------------");
 }
 
-// Stream all 4 distances as a tab-separated line (for Serial Plotter).
+// Stream all distances as a tab-separated line (for Serial Plotter).
 void plot_sensors(Car& car) {
     car.poll_lidars();
     int* s = car.read_sensors();
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < car.sensor_amount; i++) {
         Serial.print(s[i] == 9999 ? 0 : s[i] / 10);
-        if (i < 3) Serial.print('\t');
+        if (i < car.sensor_amount - 1) Serial.print('\t');
     }
     Serial.println();
 }
@@ -57,16 +57,18 @@ void test_lidar(Car& car, unsigned long duration_ms = 0) {
     Serial.println("Sensor    | Distance  | Status");
     Serial.println("----------|-----------|--------");
 
-    const char* names[4] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
+    const char* names[] = {"Left    ", "FrontL  ", "FrontR  ", "Right   ", "Front   ", "Rear    "};
     unsigned long start = millis();
+    char esc_buf[16];
+    snprintf(esc_buf, sizeof(esc_buf), "\x1b[%dA", car.sensor_amount);
 
     while (!Serial.available()) {
         if (duration_ms && (millis() - start) > duration_ms) break;
         car.poll_lidars();
         int* s = car.read_sensors();
 
-        Serial.print("\x1b[4A");
-        for (int i = 0; i < 4; i++) {
+        Serial.print(esc_buf);
+        for (int i = 0; i < car.sensor_amount; i++) {
             Serial.print(names[i]);
             Serial.print(" | ");
             if (s[i] != 9999) {

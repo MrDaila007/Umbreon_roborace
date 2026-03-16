@@ -24,7 +24,7 @@ ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Dashboard / ROS2
 |---|---|
 | `hw_config.h` | Platform auto-detection (`PLATFORM_RP2350` / `PLATFORM_ESP32S3`) |
 | `luna_car.h` | RP2350 hardware layer — SerialPIO LiDAR, Servo, PID, IMU |
-| `hw_esp32s3.h` | ESP32-S3 hardware layer — I2C LiDAR, WiFi, ESP32Servo, PID, IMU |
+| `hw_esp32s3.h` | ESP32-S3 hardware layer — 6× VL53L0X I2C, WiFi, ESP32Servo, PID, IMU |
 | `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol (shared) |
 | `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge (RP2350 only) |
 | `dashboard/` | Python app — live plots, track map, remote settings editor |
@@ -54,7 +54,7 @@ The unified `HAS_TELEM` flag replaces `USE_WIFI_DEBUG`:
 
 ## Hardware Layers
 
-Both platforms expose the same `Car` class interface (`init`, `poll_lidars`, `read_sensors`, `write_speed`, `write_steer`, `pid_control_motor`, `imu_init`, `imu_update`), allowing `Umbreon_roborace.ino` to work unchanged.
+Both platforms expose the same `Car` class interface (`init`, `poll_lidars`, `read_sensors`, `write_speed`, `write_steer`, `pid_control_motor`, `bat_update`, `imu_init`, `imu_update`), allowing `Umbreon_roborace.ino` to work unchanged.
 
 ---
 
@@ -185,24 +185,31 @@ All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU en
 
 ## hw_esp32s3.h (ESP32-S3)
 
-On the ESP32-S3, LiDARs, WiFi, and the web server are all handled on one chip — no separate WiFi bridge needed.
+On the ESP32-S3, sensors, WiFi, and the web server are all handled on one chip — no separate WiFi bridge needed.
 
-### TF-Luna LiDAR driver (I2C)
+### VL53L0X ToF sensors (I2C, XSHUT address assignment)
 
-Sensors are connected to a shared **I2C bus** (GPIO 8 SDA, GPIO 9 SCL) with unique addresses:
+6× VL53L0X time-of-flight sensors share one **I2C bus** (GPIO 8 SDA, GPIO 9 SCL). Each sensor has a dedicated XSHUT pin for boot-time address assignment:
 
-| Sensor | I2C Address |
-|---|---|
-| Left | 0x10 |
-| Front-Left | 0x11 |
-| Front-Right | 0x12 |
-| Right | 0x13 |
+| Index | Position | XSHUT GPIO | I2C Address |
+|---|---|---|---|
+| s[0] | Left | GPIO 4 | 0x30 |
+| s[1] | Front-Left | GPIO 5 | 0x31 |
+| s[2] | Front-Right | GPIO 6 | 0x32 |
+| s[3] | Right | GPIO 7 | 0x33 |
+| s[4] | Front | GPIO 12 | 0x34 |
+| s[5] | Rear | GPIO 14 | 0x35 |
 
-> **Setup note**: TF-Luna sensors ship in UART mode (address 0x10). Each must be pre-configured for I2C mode with a unique address. See `hw_esp32s3.h` header comments for instructions.
+**Address assignment procedure** (automatic at boot):
+1. All XSHUT pins held LOW (sensors in hardware standby)
+2. Release one at a time, assign unique I2C address via `setAddress()`
+3. Start continuous ranging with 33ms timing budget
 
-`poll_lidars()` reads 2 bytes from I2C register `0x00` on each sensor — far simpler than the RP2350's 9-byte UART packet parsing.
+No manual pre-configuration needed — all sensors ship at default address 0x29 and are configured automatically.
 
-`read_sensors()` returns the same `int[4]` in cm×10 for compatibility.
+`poll_lidars()` calls `readRangeContinuousMillimeters()` on each sensor. VL53L0X reports in mm, which equals cm×10 (the firmware's native distance unit).
+
+`read_sensors()` returns `int[6]` — s[0]–s[3] keep original roles for backward compatibility, s[4] (Front) and s[5] (Rear) are additive. Sensors without valid readings return `9999`.
 
 ### Built-in WiFi server
 
@@ -227,11 +234,14 @@ This allows all `telem.print()` calls in `Umbreon_roborace.ino` to work identica
 
 | Signal | GPIO |
 |---|---|
-| I2C SDA (LiDAR + IMU) | GPIO 8 |
-| I2C SCL (LiDAR + IMU) | GPIO 9 |
+| I2C SDA (VL53L0X + IMU) | GPIO 8 |
+| I2C SCL (VL53L0X + IMU) | GPIO 9 |
 | Steering servo | GPIO 10 |
 | Motor ESC | GPIO 11 |
+| VL53L0X XSHUT [0]–[3] | GPIO 4, 5, 6, 7 |
+| VL53L0X XSHUT [4]–[5] | GPIO 12, 14 |
 | Tachometer | GPIO 13 |
+| Battery ADC | GPIO 26 |
 | Status LED | GPIO 2 |
 
 ### ESP32-specific notes
@@ -239,7 +249,8 @@ This allows all `telem.print()` calls in `Umbreon_roborace.ino` to work identica
 - **ESP32Servo**: Uses LEDC PWM channels (same API as standard Servo library)
 - **IRAM_ATTR**: Required on tachometer ISR (ESP32 runs ISRs from IRAM, not flash)
 - **PROGMEM**: Memory-mapped on ESP32, so `server.send()` works directly (no `send_P` needed)
-- **IMU**: Same MPU-6050 setup, shared I2C bus with LiDARs (skips `Wire.begin()` since `Car::init()` already called it)
+- **IMU**: Same MPU-6050 setup, shared I2C bus with VL53L0X sensors (skips `Wire.begin()` since `Car::init()` already called it)
+- **Battery monitoring**: Same ADC + resistor divider as RP2350 (GPIO 26, EMA filter, 500ms self-throttle)
 
 ---
 
@@ -397,13 +408,15 @@ Creates WiFi AP **"Umbreon"** (password `12345678`) and runs three servers:
 Each control tick (25 Hz) the car sends a CSV line over UART1:
 
 ```
-ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]
+ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]              (RP2350, 4 sensors)
+ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]        (ESP32-S3, 6 sensors)
 ```
 
 | Field | Unit | Description |
 |---|---|---|
 | ms | ms | `millis()` timestamp |
-| s0–s3 | cm×10 | LiDAR distances (Left, FL, FR, Right) |
+| s0–s3 | cm×10 | Sensor distances (Left, FL, FR, Right) |
+| s4–s5 | cm×10 | ESP32-S3 only: Front, Rear |
 | steer | — | Steering command sent (`diff × coef`) |
 | speed | m/s | Measured wheel speed |
 | target | m/s | Target speed |

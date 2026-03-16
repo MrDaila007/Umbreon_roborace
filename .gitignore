@@ -56,4 +56,5 @@ dashboard/umbreon_*.csv
 Roborace-Regulations-2025-11-12.pdf
 CLAUDE.md
 .claude/settings.local.json
+wifi_config.h
 wifi_debug/wifi_config.h

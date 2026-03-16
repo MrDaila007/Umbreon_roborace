@@ -90,14 +90,31 @@ static VL53L0X      tof_sensor[NUM_TOF_SENSORS];
 #endif
 
 // ─── WiFi configuration ───────────────────────────────────────────────────
-// Change WIFI_MODE_SETTING to WIFI_STA to join an existing network.
-// If STA connection fails, falls back to AP mode automatically.
-#define WIFI_MODE_SETTING  WIFI_AP      // WIFI_AP or WIFI_STA
-#define AP_SSID            "Umbreon"
-#define AP_PASS            "12345678"
-#define STA_SSID           "YourWiFi"
-#define STA_PASS           "YourPassword"
-#define STA_TIMEOUT_S      15
+// Copy wifi_config_example.h → wifi_config.h and edit your credentials.
+// wifi_config.h is git-ignored so secrets stay local.
+// If the file doesn't exist, safe defaults below are used (AP mode).
+#if __has_include("wifi_config.h")
+  #include "wifi_config.h"
+#endif
+
+#ifndef WIFI_MODE_SETTING
+  #define WIFI_MODE_SETTING  WIFI_AP
+#endif
+#ifndef AP_SSID
+  #define AP_SSID            "Umbreon"
+#endif
+#ifndef AP_PASS
+  #define AP_PASS            "12345678"
+#endif
+#ifndef STA_SSID
+  #define STA_SSID           "YourWiFi"
+#endif
+#ifndef STA_PASS
+  #define STA_PASS           "YourPassword"
+#endif
+#ifndef STA_TIMEOUT_S
+  #define STA_TIMEOUT_S      15
+#endif
 
 // Server ports (same as ESP8266 version)
 #define HTTP_PORT    80

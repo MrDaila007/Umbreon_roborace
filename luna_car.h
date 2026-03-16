@@ -28,13 +28,20 @@ static const uint32_t LIDAR_BAUD       = 115200;
 #define MOTOR_PIN   11   // Motor ESC (PWM)
 #define TAHO_PIN    13   // Optical encoder on central rod (interrupt, RISING)
 
+// Battery voltage via resistor divider on ADC
+// Recommended: R1=18kΩ (bat→pin), R2=10kΩ (pin→GND) → multiplier 2.8, max 9V safe
+#define BAT_PIN     26   // GP26 = ADC0
+#define BAT_EMA     0.05f // slow EMA for stable reading
+
+extern float cfg_bat_multiplier;  // (R1+R2)/R2 — depends on your divider
+
 // ─── Steering limits (runtime-configurable) ─────────────────────────────────
 extern int   cfg_neutral_point;
 extern int   cfg_min_point;
 extern int   cfg_max_point;
 
 // ─── ESC limits (runtime-configurable) ──────────────────────────────────────
-#define NEUTRAL_SPEED  90       // never changes
+#define NEUTRAL_SPEED  1500     // µs — never changes
 extern int   cfg_min_speed;     // slowest forward
 extern int   cfg_max_speed;     // fastest forward
 extern int   cfg_min_bspeed;    // slowest reverse
@@ -103,12 +110,18 @@ public:
     bool          imu_ok       = false;
     float         yaw_rate     = 0.0f;   // current gyro Z rate (°/s)
     float         heading      = 0.0f;   // accumulated heading change (°)
+    float         gyro_bias    = 0.0f;   // Z-axis bias (°/s), subtracted from readings
     unsigned long imu_prev_us  = 0;
 #endif
+
+    // Battery
+    float         bat_voltage  = 0.0f;   // filtered battery voltage (V)
+    unsigned long bat_prev_ms  = 0;
 
     const int sensor_amount = 4;
 
     void init();
+    void bat_update();  // read ADC, apply divider + EMA (call every loop tick, self-throttles)
 
     // Drive & steering (same interface as original big_car.h)
     void write_speed(int s);          // raw ESC value  -1000…1000
@@ -126,6 +139,7 @@ public:
 
 #if USE_IMU
     bool imu_init();
+    void imu_calibrate();   // sample gyro bias while stationary (~1s)
     void imu_update();
     void reset_heading() { heading = 0.0f; }
 #endif
@@ -146,6 +160,10 @@ void Car::init() {
 
     pinMode(TAHO_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(TAHO_PIN), taho_interrupt, RISING);
+
+    // Battery ADC
+    analogReadResolution(12);  // 12-bit (0–4095)
+    pinMode(BAT_PIN, INPUT);
 
     _serials[0] = &_lidar_serial0;
     _serials[1] = &_lidar_serial1;
@@ -223,24 +241,24 @@ void Car::pid_control_motor() {
     float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
                       (3.14159265f * cfg_wheel_diam_m) / dt;
 
-    // EMA filter
-    pid_filtered = 0.5f * raw_speed + 0.5f * pid_filtered;
+    // EMA filter (0.7 = responsive, 0.3 = smooth)
+    pid_filtered = 0.7f * raw_speed + 0.3f * pid_filtered;
     if ((micros() - last) > 500000UL) pid_filtered = 0;
 
-    // PID
+    // PID (gains operate in µs domain: output is µs offset from feedforward)
     float error = target_speed - pid_filtered;
     pid_integral += error * dt;
-    pid_integral = constrain(pid_integral, -5.0f, 5.0f);
+    pid_integral = constrain(pid_integral, -50.0f, 50.0f);
     float deriv = (error - pid_prev_error) / dt;
     pid_prev_error = error;
 
-    // feedforward: motor dead zone below cfg_min_speed
+    // feedforward: jump past motor dead zone, then PID corrects from there
     float ff = (target_speed > 0.01f) ? (float)(cfg_min_speed - NEUTRAL_SPEED) : 0;
     float output = ff + cfg_pid_kp * error + cfg_pid_ki * pid_integral + cfg_pid_kd * deriv;
 
     int esc_val = NEUTRAL_SPEED + (int)output;
     esc_val = constrain(esc_val, NEUTRAL_SPEED, cfg_max_speed);
-    motor_esc.write(esc_val);
+    motor_esc.writeMicroseconds(esc_val);
 }
 
 void Car::write_speed_ms(float s) {
@@ -252,19 +270,36 @@ void Car::write_speed(int s) {
     pid_integral = 0; pid_prev_error = 0; pid_filtered = 0; pid_prev_ms = 0;
 
     s = constrain(s, -1000, 1000);
-    if      (s > 0) s = map(s,     1, 1000, cfg_min_speed,  cfg_max_speed);
-    else if (s < 0) s = map(s, -1000,   -1, 0,              cfg_min_bspeed);
+    if      (s > 0) s = map(s,     1, 1000, cfg_min_speed,   cfg_max_speed);
+    else if (s < 0) s = map(s, -1000,   -1, 1000,            cfg_min_bspeed);
     else            s = NEUTRAL_SPEED;
-    motor_esc.write(s);
+    motor_esc.writeMicroseconds(s);
 }
 
 // ─── Steering ─────────────────────────────────────────────────────────────────
 void Car::write_steer(int s) {
-    s = -s;   // invert so positive = right (match original convention)
+    extern bool cfg_servo_reverse;
+    if (cfg_servo_reverse) s = -s;   // invert so positive = right (depends on servo mounting)
     s = constrain(s, -1000, 1000);
     if (s < 0) s = map(s, -1000, 0,    cfg_min_point,     cfg_neutral_point);
     else       s = map(s,     0, 1000, cfg_neutral_point,  cfg_max_point);
     steer_servo.write(s);
+}
+
+// ─── Battery voltage (ADC + resistor divider) ────────────────────────────────
+void Car::bat_update() {
+    // Self-throttle: read every 500ms (ADC is slow, voltage changes slowly)
+    unsigned long now = millis();
+    if (now - bat_prev_ms < 500) return;
+    bat_prev_ms = now;
+
+    int raw = analogRead(BAT_PIN);
+    float v_adc = raw * (3.3f / 4095.0f);
+    float v_bat = v_adc * cfg_bat_multiplier;
+
+    // EMA filter for stable display
+    if (bat_voltage < 0.1f) bat_voltage = v_bat;  // first reading — seed
+    else bat_voltage = BAT_EMA * v_bat + (1.0f - BAT_EMA) * bat_voltage;
 }
 
 // ─── IMU (MPU-6050 gyro Z) ──────────────────────────────────────────────────
@@ -298,6 +333,35 @@ bool Car::imu_init() {
     return true;
 }
 
+// Sample gyro Z while stationary to measure bias offset.
+// Takes ~1 second (200 samples at 5ms intervals). Call after imu_init(), before driving.
+void Car::imu_calibrate() {
+    if (!imu_ok) return;
+
+    const int SAMPLES = 200;
+    float sum = 0.0f;
+    int   count = 0;
+
+    for (int i = 0; i < SAMPLES; i++) {
+        Wire.beginTransmission(MPU6050_ADDR);
+        Wire.write(0x47);
+        Wire.endTransmission(false);
+        Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)2);
+        if (Wire.available() >= 2) {
+            int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
+            sum += raw_z / GYRO_SENS;
+            count++;
+        }
+        delay(5);
+    }
+
+    if (count > 0)
+        gyro_bias = sum / count;
+}
+
+#define IMU_EMA_ALPHA  0.3f    // EMA smoothing (0.0=max smooth, 1.0=no filter)
+#define IMU_DEADZONE   0.4f    // ignore rates below this (°/s) — kills drift when stationary
+
 void Car::imu_update() {
     if (!imu_ok) return;
 
@@ -307,8 +371,16 @@ void Car::imu_update() {
     Wire.requestFrom((uint8_t)MPU6050_ADDR, (uint8_t)2);
     if (Wire.available() < 2) return;
 
+    extern bool cfg_imu_rotate;
     int16_t raw_z = ((int16_t)Wire.read() << 8) | Wire.read();
-    yaw_rate = raw_z / GYRO_SENS;
+    float raw_rate = (raw_z / GYRO_SENS) - gyro_bias;
+    if (cfg_imu_rotate) raw_rate = -raw_rate;
+
+    // Dead zone — zero out noise when nearly stationary
+    if (fabsf(raw_rate) < IMU_DEADZONE) raw_rate = 0.0f;
+
+    // EMA low-pass filter
+    yaw_rate = IMU_EMA_ALPHA * raw_rate + (1.0f - IMU_EMA_ALPHA) * yaw_rate;
 
     unsigned long now = micros();
     float dt = (now - imu_prev_us) / 1e6f;

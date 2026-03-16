@@ -71,6 +71,7 @@ Increase delays on longer cars or tighter dead ends.
 | `IMU` | `USE_IMU` | `1` | Compile-time only. Set to `0` to disable IMU entirely (no `Wire.h` linked). |
 | `RCW` | `cfg_race_cw` | `1` | Set to `0` for counter-clockwise races. Changeable at runtime. |
 | `WDD` | `cfg_wrong_dir_deg` | `120.0` | Degrees of wrong-direction heading before recovery triggers. Lower = more sensitive (may false-trigger on tight hairpins). Higher = slower reaction. |
+| `IMR` | `cfg_imu_rotate` | `1` | Negate yaw rate for 180°-rotated IMU mounting. Set to `0` if IMU is mounted normally. |
 
 **Decay factor** (hardcoded `0.97`): correct-direction heading decays by 3 % per tick. At 25 Hz this halves in ~0.9 s. Increase toward `1.0` if you want the detector to remember longer history; decrease if tight corners cause false triggers.
 
@@ -86,14 +87,20 @@ Increase delays on longer cars or tighter dead ends.
 
 | Key | Variable | Default | Effect |
 |---|---|---|---|
-| `MSP` | `cfg_min_speed` | 96 | Minimum ESC PWM for forward (too low = no movement) |
-| `XSP` | `cfg_max_speed` | 110 | Maximum ESC PWM for forward (increase for more top speed) |
-| `BSP` | `cfg_min_bspeed` | 85 | Minimum ESC PWM for reverse |
+| `MSP` | `cfg_min_speed` | 1540 | Minimum ESC forward (µs). Use ESC min-speed slider in web UI to find the threshold where wheels just start spinning |
+| `XSP` | `cfg_max_speed` | 1700 | Maximum ESC forward (µs) |
+| `BSP` | `cfg_min_bspeed` | 1460 | Minimum ESC reverse (µs, below 1500 neutral) |
 | `MNP` | `cfg_min_point` | 40 | Maximum left steering angle (degrees) |
 | `XNP` | `cfg_max_point` | 140 | Maximum right steering angle (degrees) |
 | `NTP` | `cfg_neutral_point` | 90 | Straight-ahead servo angle |
 
-> Always verify ESC neutral (90°) matches your ESC calibration before driving.
+ESC uses `writeMicroseconds()` with range 1000–2000 µs, neutral at 1500 µs. Forward is above 1500, reverse is below 1500.
+
+> **ESC calibration** runs automatically on first boot (sends 2000→1000→1500 µs so the ESC learns its endpoints). The `CAL` flag in EEPROM tracks this. Use `$TEST:cal` to recalibrate, or `$SET:CAL=0` + `$SAVE` + reboot.
+
+> **Servo calibration** is done manually via the web UI wizard: step through min/max/neutral positions with +/- buttons, verify, and save to EEPROM.
+
+> **ESC min-speed calibration**: use the ESC slider in the web UI to find the exact µs value where wheels start moving, then Apply & Save.
 
 ---
 
@@ -131,3 +138,41 @@ Typical manual tuning:
 - Default output rate from the factory: **100 Hz** (one frame every 10 ms).
   At 115200 baud, 9-byte frames arrive faster than the 40 ms control loop — no data loss expected.
 - If a sensor returns all zeros, check wiring (TX of TF-Luna → RX GPIO, 5 V power, GND).
+
+---
+
+## IMU Signal Processing
+
+The MPU-6050 gyro Z readings go through a 3-stage pipeline to minimize drift:
+
+1. **Bias calibration** (`imu_calibrate()`): at boot, 200 samples over ~1s while stationary. Average offset stored as `gyro_bias` and subtracted from every reading.
+2. **EMA low-pass filter** (α=0.3): smooths high-frequency noise. Each reading = 30% new + 70% previous.
+3. **Dead zone** (0.4°/s): any filtered reading below ±0.4°/s is zeroed. Kills residual drift when stationary.
+
+Pipeline: `raw → bias subtract → EMA → dead zone → integrate to heading`
+
+If the dead zone is too aggressive during slow turns, reduce `IMU_DEADZONE` in `luna_car.h`. If still noisy, reduce `IMU_EMA_ALPHA`.
+
+---
+
+## Battery Monitoring
+
+Optional feature — enable with `BEN=1` in settings.
+
+| Key | Variable | Default | Effect |
+|---|---|---|---|
+| `BEN` | `cfg_bat_enabled` | `0` | Enable/disable battery ADC reading and low-voltage cutoff |
+| `BML` | `cfg_bat_multiplier` | `2.8` | Resistor divider multiplier `(R1+R2)/R2`. Default for R1=18kΩ, R2=10kΩ |
+| `BLV` | `cfg_bat_low` | `6.0` | Low voltage cutoff (V). Car stops if below this for >10 seconds |
+
+**Wiring** (GP26 / ADC0):
+```
+Battery+ ──[18kΩ R1]──┬──[10kΩ R2]── GND
+                       └── GP26
+```
+
+**For different dividers**, calculate `BML = (R1+R2)/R2` and set via `$SET:BML=3.0`.
+
+**Low-voltage safety**: if `bat_voltage < BLV` for >10 consecutive seconds, the car emergency-stops (motors off, `$STS:STOP` + `$T:BAT,phase=LOW_VOLTAGE_CUTOFF` sent). The 10s timer resets if voltage recovers (prevents false triggers from voltage sag under motor load).
+
+**2S LiPo reference**: 8.4V full, 7.4V nominal, 6.0V empty (default cutoff).

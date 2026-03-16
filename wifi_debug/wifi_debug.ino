@@ -52,20 +52,22 @@
 #include <ESP8266WebServer.h>
 #include <WebSocketsServer.h>
 #include "web_ui.h"
+#include "wifi_config.h"
 
 // ─── WiFi mode ──────────────────────────────────────────────────────────────
-// Set to WIFI_STA to connect to your router, WIFI_AP to create own hotspot.
-// In STA mode, falls back to AP if connection fails after STA_TIMEOUT_S.
-#define WIFI_MODE       WIFI_AP
-
-// ─── STA credentials (your home/lab WiFi) ───────────────────────────────────
-#define STA_SSID        "YourWiFi"       // ← change this
-#define STA_PASS        "YourPassword"   // ← change this
-#define STA_TIMEOUT_S   15               // seconds to wait before AP fallback
+// If WIFI_MODE is not defined in wifi_config.h, default to WIFI_STA.
+#ifndef WIFI_MODE
+#define WIFI_MODE WIFI_STA
+#endif
 
 // ─── AP credentials (fallback / competition) ────────────────────────────────
+// If AP_SSID / AP_PASS are not defined in wifi_config.h, use safe defaults.
+#ifndef AP_SSID
 #define AP_SSID   "Umbreon"
+#endif
+#ifndef AP_PASS
 #define AP_PASS   "12345678"   // min 8 chars for WPA2
+#endif
 
 // ─── Ports ──────────────────────────────────────────────────────────────────
 #define TCP_PORT  23
@@ -124,9 +126,10 @@ static void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
             break;
 
         case WStype_TEXT:
-            // Forward command to car via UART
+            // Forward command to car via UART (exact length — payload may not be null-terminated)
             if (length > 0) {
-                Serial.println((char*)payload);
+                Serial.write(payload, length);
+                Serial.println();
             }
             break;
 

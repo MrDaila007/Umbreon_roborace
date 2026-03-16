@@ -27,12 +27,12 @@ DEFAULTS = {
     "SOD":  1000,     # SIDE_OPEN_DIST
     "ACD":   800,     # ALL_CLOSE_DIST
     "CFD":   201,     # CLOSE_FRONT_DIST
-    "KP":    4.18,    # PID_KP
-    "KI":    2.93,    # PID_KI
-    "KD":    0.43,    # PID_KD
-    "MSP":    96,     # MIN_SPEED
-    "XSP":   110,     # MAX_SPEED
-    "BSP":    85,     # MIN_BSPEED
+    "KP":   60.0,     # PID_KP (scaled for µs ESC output)
+    "KI":   40.0,     # PID_KI
+    "KD":    6.0,     # PID_KD
+    "MSP":  1540,     # MIN_SPEED (µs)
+    "XSP":  1700,     # MAX_SPEED (µs)
+    "BSP":  1460,     # MIN_BSPEED (µs)
     "MNP":    40,     # MIN_POINT (steering)
     "XNP":   140,     # MAX_POINT
     "NTP":    90,     # NEUTRAL_POINT
@@ -46,6 +46,12 @@ DEFAULTS = {
     "WDD": 120.0,     # WRONG_DIR_DEG
     "RCW":     1,     # RACE_CW (bool: 1=CW, 0=CCW)
     "STK":    25,     # stuck_time threshold
+    "IMR":     1,     # IMU rotated 180° (negate yaw)
+    "SVR":     1,     # Servo reverse (negate steering)
+    "CAL":     0,     # Calibrated flag (auto-set after ESC+servo cal)
+    "BEN":     0,     # Battery monitoring enabled
+    "BML":   2.8,     # Battery divider multiplier (R1+R2)/R2
+    "BLV":   6.0,     # Battery low voltage cutoff (V)
     "IMU":     1,     # USE_IMU (read-only)
     "DBG":     1,     # USE_WIFI_DEBUG (read-only)
 }
@@ -59,9 +65,9 @@ KEY_NAMES = {
     "KP":   "PID Kp",
     "KI":   "PID Ki",
     "KD":   "PID Kd",
-    "MSP":  "Min Speed (ESC)",
-    "XSP":  "Max Speed (ESC)",
-    "BSP":  "Min Reverse Speed",
+    "MSP":  "Min Speed (µs)",
+    "XSP":  "Max Speed (µs)",
+    "BSP":  "Min Reverse (µs)",
     "MNP":  "Min Steer Point",
     "XNP":  "Max Steer Point",
     "NTP":  "Neutral Steer Point",
@@ -75,6 +81,12 @@ KEY_NAMES = {
     "WDD":  "Wrong Dir Degrees",
     "RCW":  "Race Clockwise",
     "STK":  "Stuck Threshold",
+    "IMR":  "IMU Rotated 180°",
+    "SVR":  "Servo Reverse",
+    "CAL":  "Calibrated",
+    "BEN":  "Battery Monitor",
+    "BML":  "Battery Multiplier",
+    "BLV":  "Battery Low (V)",
     "IMU":  "IMU Enabled (r/o)",
     "DBG":  "WiFi Debug (r/o)",
 }
@@ -91,8 +103,9 @@ PARAM_GROUPS = {
     "Tachometer":         ["ENH", "WDM"],
     "Control Loop":       ["LMS", "SPD1", "SPD2", "COE1", "COE2"],
     "Navigation":         ["WDD", "RCW", "STK"],
+    "Hardware":           ["IMR", "SVR", "CAL", "BEN", "BML", "BLV"],
     "Flags (read-only)":  ["IMU", "DBG"],
 }
 
 # ─── Float keys (need float parsing/display, rest are int) ───────────────────
-FLOAT_KEYS = {"KP", "KI", "KD", "WDM", "SPD1", "SPD2", "COE1", "COE2", "WDD"}
+FLOAT_KEYS = {"KP", "KI", "KD", "WDM", "SPD1", "SPD2", "COE1", "COE2", "WDD", "BML", "BLV"}

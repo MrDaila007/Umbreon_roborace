@@ -45,7 +45,7 @@ CI runs on push/PR via `.github/workflows/ci.yml`:
 - **Python imports**: verifies all dashboard/sim modules import cleanly
 - **ROS2 build**: Docker image build with colcon
 
-No automated test suite — diagnostics are in `tests.h` (7 WiFi-accessible hardware tests: lidar, servo, taho, esc, speed, autotune, reactive).
+No automated test suite — diagnostics are in `tests.h` (8 WiFi-accessible hardware tests: lidar, servo, taho, esc, speed, autotune, reactive, cal).
 
 ## Architecture
 
@@ -82,10 +82,14 @@ ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
 - `luna_car.h` (RP2350) / `hw_esp32s3.h` (ESP32-S3): hardware abstraction layer with identical Car class interface
 - `tests.h` provides diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
 - **Start/Stop**: car boots stopped by default; `$START`/`$STOP` control driving; idle telemetry streams sensor data when stopped
-- **Remote tests**: 7 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)
+- **Remote tests**: 8 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)
 - All distances are in **cm×10** units (e.g., 1200 = 120.0 cm)
-- ESC: forward [96–110], reverse [0–85], neutral 90 (PWM angle)
-- 25 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
+- ESC: `writeMicroseconds()` — forward [1540–1700], reverse [1460–1000], neutral 1500 µs
+- **Calibration**: ESC auto-calibrates on first boot (max 2000→min 1000→neutral 1500 µs, saved to EEPROM). Servo calibration is manual via web UI wizard (step-by-step min/max/neutral with +/- buttons). ESC min-speed calibration via live slider in web UI.
+- **Hardware flags**: `IMR` (negate yaw for 180°-rotated IMU), `SVR` (reverse servo direction), `CAL` (ESC calibrated flag)
+- **IMU signal processing**: bias calibration on boot (~1s, 200 samples), EMA low-pass filter (α=0.3), dead zone (0.4°/s) to eliminate drift
+- **Battery monitoring** (optional, `BEN`): ADC on GP26 via resistor divider (R1=18kΩ, R2=10kΩ, multiplier `BML`=2.8), EMA filtered, low-voltage cutoff (`BLV`=6.0V, 10s sustained → emergency stop). `$BAT` command returns voltage.
+- 31 runtime-configurable parameters via `$SET`/`$GET` commands, persisted to EEPROM with `$SAVE`
 
 ### WiFi Bridge (`wifi_debug/wifi_debug.ino` + `web_ui.h`) — Wemos D1 Mini
 
@@ -121,13 +125,16 @@ $START          → $ACK              (begin autonomous driving)
 $STOP           → $ACK              (halt motors, stay idle)
 $STATUS         → $STS:RUN|STOP     (query running state)
 $DRV:<s>,<v>   → (none)             (manual drive: steer -1000..+1000, speed m/s; fire-and-forget, 500ms timeout)
+$SRV:<angle>   → (none)             (direct servo write 0-180° for calibration)
+$ESC:<us>      → (none)             (direct ESC write 1000-2000 µs for calibration)
+$BAT            → $BAT:<voltage>     (read battery voltage, requires BEN=1)
 $TEST:<name>    → $T:<TAG>,k=v,...   (progress lines)
                    $TR:<method>,K=V  (results, autotune only)
                    $TDONE:<name>     (completion)
 ```
 
-Test names: `lidar`, `servo`, `taho`, `esc`, `speed`, `autotune`, `reactive`.
-Motor tests (esc, speed, autotune) skip serial confirmation — dashboard provides confirm dialog.
+Test names: `lidar`, `servo`, `taho`, `esc`, `speed`, `autotune`, `reactive`, `cal`.
+Motor tests (esc, speed, autotune, cal) skip serial confirmation — dashboard provides confirm dialog.
 Tests auto-stop the car. Send `$STOP` to abort a running test.
 
 ## Telemetry Format (CSV, 25 Hz)
@@ -140,10 +147,11 @@ Tests auto-stop the car. Send `$STOP` to abort a running test.
 
 ## Key Constants
 
-- EEPROM magic: `0x554D4252` ("UMBR"), version 1
+- EEPROM magic: `0x554D4252` ("UMBR"), version 5
 - Encoder: 62 holes/rev, 60 mm wheel diameter
 - PID defaults (Tyreus-Luyben): KP=4.18, KI=2.93, KD=0.43
-- Servo range: 40°–140°, neutral 90°
+- Servo range: 40°–140°, neutral 90° (configurable via calibration wizard)
+- ESC range: 1540–1700 µs forward, 1460 µs min reverse, 1500 µs neutral (configurable)
 - Compile flag: `#pragma GCC optimize("Ofast")`
 - Conditional compilation: `USE_WIFI_DEBUG`, `USE_IMU` (defined at top of .ino)
 
@@ -195,4 +203,4 @@ ros2/
 
 ### Node Parameters
 
-`host`, `port`, `auto_connect` + all 23 writable car config keys (changes → `$SET`)
+`host`, `port`, `auto_connect` + all writable car config keys (changes → `$SET`)

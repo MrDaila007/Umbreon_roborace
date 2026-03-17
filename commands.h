@@ -83,6 +83,16 @@ static void cmd_get() {
     telem.print(",BLV="); telem.print(cfg_bat_low, 1);
     telem.print(",IMU="); telem.print(USE_IMU);
     telem.print(",DBG="); telem.print(HAS_TELEM);
+    telem.print(",SNS="); telem.print(car.sensor_amount);
+    telem.println();
+}
+
+static void cmd_sens() {
+    telem.print("$SENS:");
+    for (int i = 0; i < car.sensor_amount; i++) {
+        if (i > 0) telem.print(',');
+        telem.print(car.sensor_ok(i) ? 1 : 0);
+    }
     telem.println();
 }
 
@@ -312,6 +322,7 @@ static void dispatch_command(const char* line) {
     else if (strcmp(line, "$BAT")    == 0) {
         telem.print("$BAT:"); telem.println(car.bat_voltage, 2);
     }
+    else if (strcmp(line, "$SENS")   == 0) cmd_sens();
     else if (strncmp(line, "$TEST:", 6) == 0) cmd_test(line + 6);
     else if (strncmp(line, "$DRV:", 5) == 0) cmd_drv(line + 5);
     else if (strncmp(line, "$SRV:", 5) == 0) {

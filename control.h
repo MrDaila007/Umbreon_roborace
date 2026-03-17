@@ -46,31 +46,44 @@ void work() {
 
     // ── Steering ─────────────────────────────────────────────────────────────
     int diff;
+#if PLATFORM_ESP32S3
+    // ESP32-S3: [0]=Left(−90°) [1]=FL(−45°) [2]=Front-L(0°) [3]=Front-R(0°) [4]=FR(+45°) [5]=Right(+90°)
+    bool f_l = s[1] < cfg_front_obstacle_dist;  // −45° diagonal blocked
+    bool f_r = s[4] < cfg_front_obstacle_dist;  // +45° diagonal blocked
+    bool f_c = (s[2] < cfg_front_obstacle_dist) || (s[3] < cfg_front_obstacle_dist);  // 0° front pair
+
+    if (s[0] > cfg_side_open_dist && s[5] > cfg_side_open_dist) {
+        diff = 800;   // both sides open — keep to right wall
+    } else {
+        diff = s[5] - s[0];  // positive → steer right (away from right wall)
+    }
+
+    if (s[0] < cfg_all_close_dist && s[1] < cfg_all_close_dist &&
+        s[4] < cfg_all_close_dist && s[5] < cfg_all_close_dist) {
+        diff = 800;   // all close — hard turn to escape
+    }
+#else
+    // RP2350: [0]=Left [1]=FL [2]=FR [3]=Right
     bool f_l = s[1] < cfg_front_obstacle_dist;  // front-left blocked
     bool f_r = s[2] < cfg_front_obstacle_dist;  // front-right blocked
-#if PLATFORM_ESP32S3
-    bool f_c = s[4] < cfg_front_obstacle_dist;  // front-center blocked
-#endif
 
     if (s[0] > cfg_side_open_dist && s[3] > cfg_side_open_dist) {
-        // Both sides open — keep to right wall
-        diff = 800;
+        diff = 800;   // both sides open — keep to right wall
     } else {
-        // Balance between walls
         diff = s[3] - s[0];  // positive → steer right (away from right wall)
     }
 
-    // All sensors close: hard turn to escape
     if (s[0] < cfg_all_close_dist && s[1] < cfg_all_close_dist &&
         s[2] < cfg_all_close_dist && s[3] < cfg_all_close_dist) {
-        diff = 800;
+        diff = 800;   // all close — hard turn to escape
     }
+#endif
 
     // ── Speed ────────────────────────────────────────────────────────────────
 #if PLATFORM_ESP32S3
-    int how_clear = (int)f_l + (int)f_r + (int)f_c;  // 0 = path clear, 1-3 = blocked
+    int how_clear = (int)f_l + (int)f_r + (int)f_c;  // 0 = clear, 1-3 = blocked
 #else
-    int how_clear = (int)f_l + (int)f_r;  // 0 = path clear, 1-2 = blocked
+    int how_clear = (int)f_l + (int)f_r;              // 0 = clear, 1-2 = blocked
 #endif
     float coef, spd;
 
@@ -108,8 +121,13 @@ void work() {
 #endif
 
     // ── Stuck detection ──────────────────────────────────────────────────────
+#if PLATFORM_ESP32S3
+    bool c_fl = s[2] < cfg_close_front_dist;  // front-left center (0°)
+    bool c_fr = s[3] < cfg_close_front_dist;  // front-right center (0°)
+#else
     bool c_fl = s[1] < cfg_close_front_dist;
     bool c_fr = s[2] < cfg_close_front_dist;
+#endif
     bool low_speed = get_speed() < 0.1f;
 
     static int stuck_time = 0;

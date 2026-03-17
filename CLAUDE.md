@@ -74,7 +74,7 @@ ESP32-S3 Firmware ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
 - No separate bridge needed — WiFi servers run on same chip
 - Telemetry output: `telem` macro → `TelemetryStream` (broadcasts to WiFi clients)
 - 6× VL53L0X ToF sensors with XSHUT-based address assignment (0x30–0x35) — no manual pre-configuration needed
-- Sensor layout: s[0]=Left, s[1]=FL, s[2]=FR, s[3]=Right, s[4]=Front, s[5]=Rear
+- Sensor layout (all on front bumper): s[0]=Left(−90°), s[1]=FL(−45°), s[2]=Front-L(0°), s[3]=Front-R(0°), s[4]=FR(+45°), s[5]=Right(+90°)
 
 **Platform selection**: automatic via `hw_config.h` based on board package. The `HAS_TELEM` flag replaces `USE_WIFI_DEBUG` as the unified telemetry guard.
 

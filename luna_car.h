@@ -136,6 +136,7 @@ public:
 
     // Feed incoming LiDAR bytes — call every loop iteration
     void poll_lidars();
+    bool sensor_ok(int i) const { return (i >= 0 && i < 4) ? _lidars[i].hasReading : false; }
 
 #if USE_IMU
     bool imu_init();

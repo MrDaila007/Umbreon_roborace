@@ -24,13 +24,15 @@
 // holds all XSHUT lines LOW, then releases them one at a time and assigns
 // unique addresses.  No manual pre-configuration needed.
 //
-// Sensor layout (index → position → XSHUT GPIO → I2C address):
-//   [0] Left         GPIO 4   0x30
-//   [1] Front-Left   GPIO 5   0x31
-//   [2] Front-Right  GPIO 6   0x32
-//   [3] Right        GPIO 7   0x33
-//   [4] Front        GPIO 12  0x34
-//   [5] Rear         GPIO 14  0x35
+// All 6 sensors are mounted on the front bumper:
+//
+// Sensor layout (index → position → angle → XSHUT GPIO → I2C address):
+//   [0] Left         −90°  GPIO 4   0x30
+//   [1] Front-Left   −45°  GPIO 5   0x31
+//   [2] Front-L        0°  GPIO 6   0x32
+//   [3] Front-R        0°  GPIO 7   0x33
+//   [4] Front-Right  +45°  GPIO 12  0x34
+//   [5] Right        +90°  GPIO 14  0x35
 // ═════════════════════════════════════════════════════════════════════════════
 
 #if PLATFORM_ESP32S3
@@ -52,28 +54,28 @@
 //   SDA  GPIO 8
 //   SCL  GPIO 9
 //
-// VL53L0X XSHUT pins (active-LOW shutdown):
-//   [0] Left         GPIO 4
-//   [1] Front-Left   GPIO 5
-//   [2] Front-Right  GPIO 6
-//   [3] Right        GPIO 7
-//   [4] Front        GPIO 12
-//   [5] Rear         GPIO 14
+// VL53L0X XSHUT pins (active-LOW shutdown, all on front bumper):
+//   [0] Left  (−90°)       GPIO 4
+//   [1] Front-Left (−45°)  GPIO 5
+//   [2] Front-L (0°)       GPIO 6
+//   [3] Front-R (0°)       GPIO 7
+//   [4] Front-Right (+45°) GPIO 12
+//   [5] Right (+90°)       GPIO 14
 //
 // Actuators:
 //   Steering servo   GPIO 10  (PWM via LEDC)
 //   Motor ESC        GPIO 11  (PWM via LEDC)
 //   Tachometer       GPIO 13  (RISING interrupt)
 //
-// Status LED:
-//   GPIO 2  (built-in LED — varies by board, change if needed)
+// Status LED (WS2812 RGB NeoPixel on ESP32-S3-DevKitC-1):
+//   GPIO 48  — use neopixelWrite() (built into ESP32 Arduino core)
 
 #define I2C_SDA_PIN      8
 #define I2C_SCL_PIN      9
 #define SERVO_PIN       10
 #define MOTOR_PIN       11
 #define TAHO_PIN        13
-#define STATUS_LED_PIN   2
+#define RGB_LED_PIN     48
 
 #define NUM_TOF_SENSORS  6
 
@@ -175,9 +177,14 @@ static WiFiServer        tcpServer(TCP_PORT);
 #define MAX_TCP_CLIENTS 4
 static WiFiClient tcpClients[MAX_TCP_CLIENTS];
 
-// LED blink state
+// RGB LED state
 static unsigned long led_prev_ms = 0;
 static bool          led_state   = false;
+
+// RGB LED helper — low brightness to avoid blinding
+static void rgb_led(uint8_t r, uint8_t g, uint8_t b) {
+    neopixelWrite(RGB_LED_PIN, r, g, b);
+}
 
 // ─── TelemetryStream ──────────────────────────────────────────────────────
 // Stream subclass that replaces Serial1 (UART to ESP8266) on the RP2350.
@@ -279,7 +286,7 @@ static void start_ap() {
 }
 
 void wifi_setup() {
-    pinMode(STATUS_LED_PIN, OUTPUT);
+    rgb_led(0, 0, 10);  // dim blue — booting
 
     if (WIFI_MODE_SETTING == WIFI_STA) {
         WiFi.mode(WIFI_STA);
@@ -287,6 +294,7 @@ void wifi_setup() {
         Serial.print("Connecting to ");
         Serial.print(STA_SSID);
         unsigned long start = millis();
+        bool blink = false;
         while (WiFi.status() != WL_CONNECTED) {
             if (millis() - start > STA_TIMEOUT_S * 1000UL) {
                 Serial.println("\nSTA failed, falling back to AP");
@@ -295,7 +303,8 @@ void wifi_setup() {
                 start_ap();
                 break;
             }
-            digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
+            blink = !blink;
+            rgb_led(blink ? 10 : 0, 0, blink ? 0 : 10);  // red/blue blink
             delay(100);
         }
         if (WiFi.status() == WL_CONNECTED) {
@@ -360,20 +369,22 @@ void wifi_loop() {
         }
     }
 
-    // LED status
+    // RGB LED status
     int clients = wsServer.connectedClients();
     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
         if (tcpClients[i] && tcpClients[i].connected()) clients++;
     }
     unsigned long now = millis();
     if (clients == 0) {
+        // No clients — slow blue blink
         if (now - led_prev_ms > 1000) {
             led_prev_ms = now;
             led_state = !led_state;
-            digitalWrite(STATUS_LED_PIN, led_state);
+            rgb_led(0, 0, led_state ? 10 : 0);
         }
     } else {
-        digitalWrite(STATUS_LED_PIN, HIGH);
+        // Client connected — steady green
+        rgb_led(0, 10, 0);
     }
 
     // STA auto-reconnect
@@ -403,7 +414,7 @@ static void init_tof_sensors(bool* ok_out) {
         digitalWrite(XSHUT_PINS[i], HIGH);
         delay(10);   // VL53L0X boot time
 
-        tof_sensor[i].setTimeout(500);
+        tof_sensor[i].setTimeout(100);  // short timeout — don't block WiFi loop
         if (!tof_sensor[i].init()) {
             ok_out[i] = false;
             Serial.print("VL53L0X ");
@@ -422,7 +433,7 @@ static void init_tof_sensors(bool* ok_out) {
 // ─── Car class ───────────────────────────────────────────────────────────
 // Same public interface as the RP2350 version (luna_car.h).
 // Internals differ: VL53L0X via I2C, ESP32Servo for PWM, shared I2C bus.
-// Sensor indices: [0]=Left, [1]=FL, [2]=FR, [3]=Right, [4]=Front, [5]=Rear
+// Sensor indices: [0]=Left(−90°), [1]=FL(−45°), [2]=Front-L(0°), [3]=Front-R(0°), [4]=FR(+45°), [5]=Right(+90°)
 class Car {
 public:
     Servo steer_servo;
@@ -454,6 +465,7 @@ public:
     int* read_sensors();
     void poll_lidars();
     void bat_update();
+    bool sensor_ok(int i) const { return (i >= 0 && i < NUM_TOF_SENSORS) ? _tof_ok[i] : false; }
 
 #if USE_IMU
     bool imu_init();
@@ -464,8 +476,9 @@ public:
 #endif
 
 private:
-    uint16_t _tof_dist[NUM_TOF_SENSORS] = {};
-    bool     _tof_ok[NUM_TOF_SENSORS]   = {};
+    uint16_t _tof_dist[NUM_TOF_SENSORS]     = {};
+    bool     _tof_ok[NUM_TOF_SENSORS]       = {};
+    uint8_t  _tof_fail_cnt[NUM_TOF_SENSORS] = {};  // consecutive timeout counter
 };
 
 // ─── Car::init ───────────────────────────────────────────────────────────
@@ -491,14 +504,33 @@ void Car::init() {
     pinMode(BAT_PIN, INPUT);
 }
 
-// ─── VL53L0X polling ─────────────────────────────────────────────────────
+// ─── VL53L0X polling (non-blocking) ──────────────────────────────────────
+// Checks RESULT_INTERRUPT_STATUS before reading — skips sensors whose data
+// isn't ready yet, so the loop never blocks on I2C.  If a sensor times out
+// 10 consecutive polls it is marked as failed and excluded from future reads.
 void Car::poll_lidars() {
     for (int i = 0; i < NUM_TOF_SENSORS; i++) {
         if (!_tof_ok[i]) continue;
-        uint16_t d = tof_sensor[i].readRangeContinuousMillimeters();
-        if (!tof_sensor[i].timeoutOccurred() && d < 8190) {
-            _tof_dist[i] = d;   // mm
+
+        // Non-blocking: check if measurement result is ready
+        if ((tof_sensor[i].readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) == 0) {
+            _tof_fail_cnt[i]++;
+            if (_tof_fail_cnt[i] > 10) {
+                _tof_ok[i] = false;  // disable after 10 consecutive misses
+                Serial.print("VL53L0X "); Serial.print(i); Serial.println(" disabled (timeout)");
+            }
+            continue;  // data not ready — skip, don't block
         }
+
+        // Data ready — read range and clear interrupt
+        uint16_t d = tof_sensor[i].readReg16Bit(VL53L0X::RESULT_RANGE_STATUS + 10);
+        tof_sensor[i].writeReg(VL53L0X::SYSTEM_INTERRUPT_CLEAR, 0x01);
+
+        if (d < 8190) {
+            _tof_dist[i] = d;   // mm = cm×10
+            _tof_fail_cnt[i] = 0;  // reset error counter on success
+        }
+        yield();   // let WiFi stack service connections between reads
     }
 }
 

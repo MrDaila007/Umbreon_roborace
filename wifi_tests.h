@@ -26,11 +26,15 @@ static void wifi_test_lidar() {
         int* s = car.read_sensors();
         telem.print("$T:LIDAR,L="); telem.print(s[0]);
         telem.print(",FL=");        telem.print(s[1]);
+#if PLATFORM_ESP32S3
+        // 6-sensor bumper: L(-90), FL(-45), FC1(0), FC2(0), FR(+45), R(+90)
+        telem.print(",FC1=");       telem.print(s[2]);
+        telem.print(",FC2=");       telem.print(s[3]);
+        telem.print(",FR=");        telem.print(s[4]);
+        telem.print(",R=");         telem.print(s[5]);
+#else
         telem.print(",FR=");        telem.print(s[2]);
         telem.print(",R=");         telem.print(s[3]);
-#if PLATFORM_ESP32S3
-        telem.print(",F=");         telem.print(s[4]);
-        telem.print(",RE=");        telem.print(s[5]);
 #endif
         telem.println();
         delay(100);
@@ -355,16 +359,21 @@ static void wifi_test_reactive() {
         car.poll_lidars();
         int* s = car.read_sensors();
 
+#if PLATFORM_ESP32S3
+        // 6-sensor bumper: [0]=L(-90) [1]=FL(-45) [2]=FC1(0) [3]=FC2(0) [4]=FR(+45) [5]=R(+90)
+        int L = s[0], FL = s[1], FR = s[4], R = s[5];
+        int FC = min(s[2], s[3]);  // front center — use closer reading
+        float diff = (float)(R - L);
+        if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
+        if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+        if (FC < CLOSE_DIST) {
+            diff += (float)(FR - FL) * 0.5f;
+        }
+#else
         int L = s[0], FL = s[1], FR = s[2], R = s[3];
         float diff = (float)(R - L);
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
-#if PLATFORM_ESP32S3
-        int F = s[4];
-        if (F < CLOSE_DIST) {
-            // Front blocked — bias toward the more open side
-            diff += (float)(FR - FL) * 0.5f;
-        }
 #endif
 
         float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
@@ -376,8 +385,8 @@ static void wifi_test_reactive() {
         telem.print(",FR=");         telem.print(FR);
         telem.print(",R=");          telem.print(R);
 #if PLATFORM_ESP32S3
-        telem.print(",F=");          telem.print(F);
-        telem.print(",RE=");         telem.print(s[5]);
+        telem.print(",FC1=");        telem.print(s[2]);
+        telem.print(",FC2=");        telem.print(s[3]);
 #endif
         telem.print(",steer=");      telem.print(steer_val);
         telem.println();

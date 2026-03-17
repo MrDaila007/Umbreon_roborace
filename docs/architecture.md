@@ -198,14 +198,16 @@ On the ESP32-S3, sensors, WiFi, and the web server are all handled on one chip �
 
 6× VL53L0X time-of-flight sensors share one **I2C bus** (GPIO 8 SDA, GPIO 9 SCL). Each sensor has a dedicated XSHUT pin for boot-time address assignment:
 
-| Index | Position | XSHUT GPIO | I2C Address |
-|---|---|---|---|
-| s[0] | Left | GPIO 4 | 0x30 |
-| s[1] | Front-Left | GPIO 5 | 0x31 |
-| s[2] | Front-Right | GPIO 6 | 0x32 |
-| s[3] | Right | GPIO 7 | 0x33 |
-| s[4] | Front | GPIO 12 | 0x34 |
-| s[5] | Rear | GPIO 14 | 0x35 |
+All 6 sensors are mounted on the **front bumper** at these angles:
+
+| Index | Position | Angle | XSHUT GPIO | I2C Address |
+|---|---|---|---|---|
+| s[0] | Left | −90° | GPIO 4 | 0x30 |
+| s[1] | Front-Left | −45° | GPIO 5 | 0x31 |
+| s[2] | Front-L | 0° | GPIO 6 | 0x32 |
+| s[3] | Front-R | 0° | GPIO 7 | 0x33 |
+| s[4] | Front-Right | +45° | GPIO 12 | 0x34 |
+| s[5] | Right | +90° | GPIO 14 | 0x35 |
 
 **Address assignment procedure** (automatic at boot):
 1. All XSHUT pins held LOW (sensors in hardware standby)
@@ -216,7 +218,7 @@ No manual pre-configuration needed — all sensors ship at default address 0x29 
 
 `poll_lidars()` calls `readRangeContinuousMillimeters()` on each sensor. VL53L0X reports in mm, which equals cm×10 (the firmware's native distance unit).
 
-`read_sensors()` returns `int[6]` — s[0]–s[3] keep original roles for backward compatibility, s[4] (Front) and s[5] (Rear) are additive. Sensors without valid readings return `9999`.
+`read_sensors()` returns `int[6]` — distances from all 6 bumper sensors. Side sensors s[0] (Left) and s[5] (Right) are used for wall following; diagonal s[1] (FL) and s[4] (FR) detect approaching obstacles; the front pair s[2]/s[3] faces straight ahead. Sensors without valid readings return `9999`.
 
 ### Built-in WiFi server
 
@@ -249,7 +251,7 @@ This allows all `telem.print()` calls in `Umbreon_roborace.ino` to work identica
 | VL53L0X XSHUT [4]–[5] | GPIO 12, 14 |
 | Tachometer | GPIO 13 |
 | Battery ADC | GPIO 26 |
-| Status LED | GPIO 2 |
+| RGB LED (WS2812) | GPIO 48 |
 
 ### ESP32-specific notes
 
@@ -439,7 +441,7 @@ ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]        (ESP32-S3, 6 sensor
 |---|---|---|
 | ms | ms | `millis()` timestamp |
 | s0–s3 | cm×10 | Sensor distances (Left, FL, FR, Right) |
-| s4–s5 | cm×10 | ESP32-S3 only: Front, Rear |
+| s4–s5 | cm×10 | ESP32-S3 only: Front-Right(+45°), Right(+90°) |
 | steer | — | Steering command sent (`diff × coef`) |
 | speed | m/s | Measured wheel speed |
 | target | m/s | Target speed |

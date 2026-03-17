@@ -104,6 +104,13 @@ void setup() {
                     ",yaw,heading"
 #endif
                     );
+    // Report sensor health over telemetry so dashboard can warn user
+    for (int i = 0; i < car.sensor_amount; i++) {
+        if (!car.sensor_ok(i)) {
+            telem.print("$T:SENSOR_FAIL,idx=");
+            telem.println(i);
+        }
+    }
 #endif
 
     // Run ESC+servo calibration on first boot (or after $RST + reboot)

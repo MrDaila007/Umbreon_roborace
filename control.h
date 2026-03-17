@@ -12,7 +12,7 @@
 
 void go_back() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}   // wait until stopped
+    { unsigned long _t = millis(); while (get_speed() > 0.1f && (millis() - _t) < 2000) {} }
     car.write_speed(-150);
     delay(200);
     car.write_speed(0);
@@ -24,7 +24,7 @@ void go_back() {
 
 void go_back_long() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}
+    { unsigned long _t = millis(); while (get_speed() > 0.1f && (millis() - _t) < 2000) {} }
     car.write_speed(-150);
     delay(1000);
     car.write_speed(0);
@@ -130,14 +130,14 @@ void work() {
 #endif
     bool low_speed = get_speed() < 0.1f;
 
-    static int stuck_time = 0;
+    static unsigned long stuck_time = 0;
     if (c_fl || c_fr || low_speed) {
-        stuck_time++;
+        if (stuck_time < (unsigned long)cfg_stuck_thresh * 2) stuck_time++;
     } else {
         stuck_time = 0;
     }
 
-    if (stuck_time > cfg_stuck_thresh) {
+    if (stuck_time > (unsigned long)cfg_stuck_thresh) {
         car.write_steer(0);
         go_back();
         car.write_speed_ms(2.0f);

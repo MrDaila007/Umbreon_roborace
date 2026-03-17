@@ -29,5 +29,10 @@ RUN . /opt/ros/humble/setup.sh && \
 RUN echo '. /opt/ros/humble/setup.sh' >> /ros_entrypoint.sh && \
     echo '. /ros2_ws/install/setup.sh' >> /ros_entrypoint.sh
 
+# Run as non-root user
+RUN useradd -m ros2user && \
+    chown -R ros2user:ros2user /ros2_ws
+USER ros2user
+
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["ros2", "run", "umbreon_bridge", "bridge_node"]

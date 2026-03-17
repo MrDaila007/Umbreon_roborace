@@ -6,12 +6,15 @@ on rx_queue. Main thread puts commands on tx_queue.
 Handles partial recv buffering.
 """
 
+import logging
 import socket
 import threading
 import queue
 from typing import Optional
 
 from protocol import parse_telemetry, parse_response, TelemetryFrame
+
+logger = logging.getLogger("umbreon.connection")
 
 DEFAULT_HOST = "192.168.4.1"
 DEFAULT_PORT = 23
@@ -61,7 +64,7 @@ class Connection:
             try:
                 self._sock.close()
             except OSError:
-                pass
+                logger.debug("Socket close error (ignored)")
         self._sock = None
         self._connected = False
 
@@ -80,7 +83,10 @@ class Connection:
                 try:
                     cmd = self.tx_queue.get_nowait()
                     self._sock.sendall(cmd.encode("ascii", errors="replace"))
-                except (OSError, queue.Empty):
+                except queue.Empty:
+                    break
+                except OSError:
+                    logger.warning("Failed to send command")
                     break
 
             # ── Receive data ─────────────────────────────────────────────
@@ -94,7 +100,8 @@ class Connection:
                 buf += data
             except socket.timeout:
                 pass
-            except OSError:
+            except OSError as e:
+                logger.warning("Connection lost: %s", e)
                 self._connected = False
                 self._running = False
                 break

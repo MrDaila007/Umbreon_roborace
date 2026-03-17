@@ -75,7 +75,7 @@ float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
     elapsed = max(elapsed, _taho_iv);
     if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
-    return (3.14159265f * cfg_wheel_diam_m) /
+    return ((float)M_PI * cfg_wheel_diam_m) /
            ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));
 }
 
@@ -240,7 +240,7 @@ void Car::pid_control_motor() {
     pid_prev_cnt = cnt;
 
     float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
-                      (3.14159265f * cfg_wheel_diam_m) / dt;
+                      ((float)M_PI * cfg_wheel_diam_m) / dt;
 
     // EMA filter (0.7 = responsive, 0.3 = smooth)
     pid_filtered = 0.7f * raw_speed + 0.3f * pid_filtered;

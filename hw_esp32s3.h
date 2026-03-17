@@ -165,7 +165,7 @@ float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
     elapsed = max(elapsed, (unsigned long)_taho_iv);
     if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
-    return (3.14159265f * cfg_wheel_diam_m) /
+    return ((float)M_PI * cfg_wheel_diam_m) /
            ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));
 }
 
@@ -490,6 +490,20 @@ void Car::init() {
     // VL53L0X sensors — XSHUT address assignment + continuous ranging
     init_tof_sensors(_tof_ok);
 
+    // Report sensor init status
+    int ok_count = 0;
+    for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+        if (_tof_ok[i]) ok_count++;
+    }
+    Serial.printf("VL53L0X: %d/%d sensors OK\n", ok_count, NUM_TOF_SENSORS);
+    if (ok_count < NUM_TOF_SENSORS) {
+        Serial.print("FAILED sensors:");
+        for (int i = 0; i < NUM_TOF_SENSORS; i++) {
+            if (!_tof_ok[i]) { Serial.print(' '); Serial.print(i); }
+        }
+        Serial.println();
+    }
+
     // Servo + ESC
     steer_servo.attach(SERVO_PIN);
     motor_esc.attach(MOTOR_PIN);
@@ -562,7 +576,7 @@ void Car::pid_control_motor() {
     pid_prev_cnt = cnt;
 
     float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
-                      (3.14159265f * cfg_wheel_diam_m) / dt;
+                      ((float)M_PI * cfg_wheel_diam_m) / dt;
 
     pid_filtered = 0.5f * raw_speed + 0.5f * pid_filtered;
     if ((micros() - last) > 500000UL) pid_filtered = 0;

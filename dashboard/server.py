@@ -10,11 +10,15 @@ Serves the web UI and bridges WebSocket ↔ TCP car connection.
     python server.py 9090          # custom port
 """
 
+import argparse
 import asyncio
 import json
+import logging
 import sys
 import os
 from pathlib import Path
+
+logger = logging.getLogger("umbreon.server")
 
 from aiohttp import web
 
@@ -49,6 +53,7 @@ class CarBridge:
             return True
         except Exception as e:
             self.connected = False
+            logger.warning("Connection failed: %s", e)
             return str(e)
 
     async def disconnect(self):
@@ -60,7 +65,7 @@ class CarBridge:
             try:
                 await self.writer.wait_closed()
             except Exception:
-                pass
+                logger.debug("Writer close error (ignored)")
         self.reader = None
         self.writer = None
         await self._broadcast_status()
@@ -71,6 +76,7 @@ class CarBridge:
                 self.writer.write((text.strip() + "\n").encode("ascii"))
                 await self.writer.drain()
             except Exception:
+                logger.warning("Send to car failed, disconnecting")
                 await self.disconnect()
 
     async def _read_loop(self):
@@ -90,7 +96,7 @@ class CarBridge:
         except asyncio.CancelledError:
             return
         except Exception:
-            pass
+            logger.exception("Read loop error")
         finally:
             self.connected = False
             await self._broadcast_status()
@@ -129,6 +135,7 @@ class CarBridge:
             try:
                 await ws.send_str(text)
             except Exception:
+                logger.debug("Dropped dead WebSocket client")
                 self.ws_clients.discard(ws)
 
     async def _broadcast_status(self):
@@ -190,7 +197,7 @@ async def websocket_handler(request):
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                 break
     except Exception:
-        pass
+        logger.exception("WebSocket handler error")
     finally:
         bridge.ws_clients.discard(ws)
 
@@ -214,15 +221,21 @@ def create_app():
 
 
 def main():
-    port = 8080
-    if len(sys.argv) > 1:
-        try:
-            port = int(sys.argv[1])
-        except ValueError:
-            pass
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    parser = argparse.ArgumentParser(description="Umbreon Dashboard Web Server")
+    parser.add_argument("port", nargs="?", type=int, default=8080,
+                        help="HTTP port (default: 8080)")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="Bind address (default: 127.0.0.1, use 0.0.0.0 to expose)")
+    args = parser.parse_args()
+
     app = create_app()
-    print(f"  Umbreon Dashboard -> http://localhost:{port}")
-    web.run_app(app, host="0.0.0.0", port=port, print=None)
+    print(f"  Umbreon Dashboard -> http://{args.host}:{args.port}")
+    web.run_app(app, host=args.host, port=args.port, print=None)
 
 
 if __name__ == "__main__":

@@ -5,12 +5,15 @@ Background thread reads lines, dispatches telemetry frames and command
 responses to separate queues.
 """
 
+import logging
 import socket
 import threading
 import queue
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger("umbreon.tcp_client")
 
 from umbreon_bridge.protocol import parse_telemetry, parse_response, TelemetryFrame
 
@@ -65,7 +68,8 @@ class TcpClient:
             cmd += "\n"
         try:
             self._sock.sendall(cmd.encode("ascii", errors="replace"))
-        except OSError:
+        except OSError as e:
+            logger.warning("Send failed: %s", e)
             self._connected = False
             self._running = False
 
@@ -82,7 +86,8 @@ class TcpClient:
                 buf += data
             except socket.timeout:
                 pass
-            except OSError:
+            except OSError as e:
+                logger.warning("Connection lost: %s", e)
                 self._connected = False
                 self._running = False
                 break

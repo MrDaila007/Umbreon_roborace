@@ -96,6 +96,10 @@ static void cmd_sens() {
     telem.println();
 }
 
+// Helper: constrain int/float and assign
+static int _clamp_i(const char* v, int lo, int hi) { int x = atoi(v); return x < lo ? lo : (x > hi ? hi : x); }
+static float _clamp_f(const char* v, float lo, float hi) { float x = atof(v); return x < lo ? lo : (x > hi ? hi : x); }
+
 static bool parse_set_pair(const char* pair) {
     const char* eq = strchr(pair, '=');
     if (!eq) return false;
@@ -108,36 +112,51 @@ static bool parse_set_pair(const char* pair) {
 
     const char* val = eq + 1;
 
-    if      (strcmp(key, "FOD")  == 0) cfg_front_obstacle_dist = atoi(val);
-    else if (strcmp(key, "SOD")  == 0) cfg_side_open_dist      = atoi(val);
-    else if (strcmp(key, "ACD")  == 0) cfg_all_close_dist      = atoi(val);
-    else if (strcmp(key, "CFD")  == 0) cfg_close_front_dist    = atoi(val);
-    else if (strcmp(key, "KP")   == 0) cfg_pid_kp              = atof(val);
-    else if (strcmp(key, "KI")   == 0) cfg_pid_ki              = atof(val);
-    else if (strcmp(key, "KD")   == 0) cfg_pid_kd              = atof(val);
-    else if (strcmp(key, "MSP")  == 0) cfg_min_speed           = atoi(val);
-    else if (strcmp(key, "XSP")  == 0) cfg_max_speed           = atoi(val);
-    else if (strcmp(key, "BSP")  == 0) cfg_min_bspeed          = atoi(val);
-    else if (strcmp(key, "MNP")  == 0) cfg_min_point           = atoi(val);
-    else if (strcmp(key, "XNP")  == 0) cfg_max_point           = atoi(val);
-    else if (strcmp(key, "NTP")  == 0) cfg_neutral_point       = atoi(val);
-    else if (strcmp(key, "ENH")  == 0) cfg_encoder_holes       = atoi(val);
-    else if (strcmp(key, "WDM")  == 0) cfg_wheel_diam_m        = atof(val);
-    else if (strcmp(key, "LMS")  == 0) cfg_loop_ms             = atoi(val);
-    else if (strcmp(key, "SPD1") == 0) cfg_spd_clear           = atof(val);
-    else if (strcmp(key, "SPD2") == 0) cfg_spd_blocked         = atof(val);
-    else if (strcmp(key, "COE1") == 0) cfg_coe_clear           = atof(val);
-    else if (strcmp(key, "COE2") == 0) cfg_coe_blocked         = atof(val);
-    else if (strcmp(key, "WDD")  == 0) cfg_wrong_dir_deg       = atof(val);
+    // Distance thresholds (cm×10): 0–9999
+    if      (strcmp(key, "FOD")  == 0) cfg_front_obstacle_dist = _clamp_i(val, 0, 9999);
+    else if (strcmp(key, "SOD")  == 0) cfg_side_open_dist      = _clamp_i(val, 0, 9999);
+    else if (strcmp(key, "ACD")  == 0) cfg_all_close_dist      = _clamp_i(val, 0, 9999);
+    else if (strcmp(key, "CFD")  == 0) cfg_close_front_dist    = _clamp_i(val, 0, 9999);
+    // PID gains: 0–500
+    else if (strcmp(key, "KP")   == 0) cfg_pid_kp              = _clamp_f(val, 0.0f, 500.0f);
+    else if (strcmp(key, "KI")   == 0) cfg_pid_ki              = _clamp_f(val, 0.0f, 500.0f);
+    else if (strcmp(key, "KD")   == 0) cfg_pid_kd              = _clamp_f(val, 0.0f, 500.0f);
+    // ESC limits (µs): 1000–2000
+    else if (strcmp(key, "MSP")  == 0) cfg_min_speed           = _clamp_i(val, 1000, 2000);
+    else if (strcmp(key, "XSP")  == 0) cfg_max_speed           = _clamp_i(val, 1000, 2000);
+    else if (strcmp(key, "BSP")  == 0) cfg_min_bspeed          = _clamp_i(val, 1000, 2000);
+    // Servo limits (degrees): 0–180
+    else if (strcmp(key, "MNP")  == 0) cfg_min_point           = _clamp_i(val, 0, 180);
+    else if (strcmp(key, "XNP")  == 0) cfg_max_point           = _clamp_i(val, 0, 180);
+    else if (strcmp(key, "NTP")  == 0) cfg_neutral_point       = _clamp_i(val, 0, 180);
+    // Encoder: 1–500 holes
+    else if (strcmp(key, "ENH")  == 0) cfg_encoder_holes       = _clamp_i(val, 1, 500);
+    // Wheel diameter: 0.01–1.0 m
+    else if (strcmp(key, "WDM")  == 0) cfg_wheel_diam_m        = _clamp_f(val, 0.01f, 1.0f);
+    // Loop period: 10–200 ms
+    else if (strcmp(key, "LMS")  == 0) cfg_loop_ms             = _clamp_i(val, 10, 200);
+    // Speeds: 0–5.0 m/s
+    else if (strcmp(key, "SPD1") == 0) cfg_spd_clear           = _clamp_f(val, 0.0f, 5.0f);
+    else if (strcmp(key, "SPD2") == 0) cfg_spd_blocked         = _clamp_f(val, 0.0f, 5.0f);
+    // Steering coefficients: 0–2.0
+    else if (strcmp(key, "COE1") == 0) cfg_coe_clear           = _clamp_f(val, 0.0f, 2.0f);
+    else if (strcmp(key, "COE2") == 0) cfg_coe_blocked         = _clamp_f(val, 0.0f, 2.0f);
+    // Wrong-direction threshold: 10–360°
+    else if (strcmp(key, "WDD")  == 0) cfg_wrong_dir_deg       = _clamp_f(val, 10.0f, 360.0f);
+    // Boolean flags
     else if (strcmp(key, "RCW")  == 0) cfg_race_cw             = atoi(val) != 0;
-    else if (strcmp(key, "STK")  == 0) cfg_stuck_thresh        = atoi(val);
+    // Stuck threshold: 1–500 ticks
+    else if (strcmp(key, "STK")  == 0) cfg_stuck_thresh        = _clamp_i(val, 1, 500);
+    // Hardware flags (boolean)
     else if (strcmp(key, "IMR")  == 0) cfg_imu_rotate          = atoi(val) != 0;
     else if (strcmp(key, "SVR")  == 0) cfg_servo_reverse       = atoi(val) != 0;
     else if (strcmp(key, "CAL")  == 0) cfg_calibrated          = atoi(val) != 0;
     else if (strcmp(key, "BEN")  == 0) cfg_bat_enabled          = atoi(val) != 0;
-    else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = atof(val);
-    else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = atof(val);
-    // IMU, DBG are read-only — silently ignore
+    // Battery multiplier: 0.5–10.0
+    else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = _clamp_f(val, 0.5f, 10.0f);
+    // Battery low voltage: 0–20V
+    else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = _clamp_f(val, 0.0f, 20.0f);
+    // IMU, DBG, SNS are read-only — silently ignore
     else return false;
 
     return true;
@@ -214,8 +233,8 @@ static void cmd_drv(const char* args) {
     char* comma = strchr(buf, ',');
     if (!comma) return;
     *comma = '\0';
-    manual_steer = atoi(buf);
-    manual_speed = atof(comma + 1);
+    manual_steer = constrain(atoi(buf), -1000, 1000);
+    manual_speed = constrain(atof(comma + 1), 0.0f, 2.7f);
     manual_mode = true;
     last_drv_ms = millis();
 }

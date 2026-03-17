@@ -914,14 +914,20 @@ let settingsInputs = {}; // key → input element
 function buildSettingsPanel() {
   if (!config) return;
   const container = document.getElementById('settings-groups');
-  container.innerHTML = '';
+  while (container.firstChild) container.removeChild(container.firstChild);
 
   for (const [groupName, keys] of Object.entries(config.param_groups)) {
     const grp = document.createElement('div');
     grp.className = 'settings-group';
     const hdr = document.createElement('div');
     hdr.className = 'settings-group-header';
-    hdr.innerHTML = `<span>${groupName}</span><span class="chevron">&#9660;</span>`;
+    const hdrLabel = document.createElement('span');
+    hdrLabel.textContent = groupName;
+    const hdrChevron = document.createElement('span');
+    hdrChevron.className = 'chevron';
+    hdrChevron.innerHTML = '&#9660;';
+    hdr.appendChild(hdrLabel);
+    hdr.appendChild(hdrChevron);
     hdr.addEventListener('click', () => grp.classList.toggle('collapsed'));
     grp.appendChild(hdr);
 
@@ -1071,7 +1077,7 @@ function startTest(name) {
   log.classList.add('active');
   document.getElementById('btn-test-abort').classList.add('active');
   document.getElementById('tune-results').classList.remove('active');
-  document.getElementById('tune-results-body').innerHTML = '';
+  { const tb = document.getElementById('tune-results-body'); while (tb.firstChild) tb.removeChild(tb.firstChild); }
   wsSend({ action: 'command', cmd: `$TEST:${name}` });
   // Test auto-stops the car
   carRunning = false;
@@ -1097,12 +1103,22 @@ function onTestResult(method, params) {
   const kp = params.KP || 0;
   const ki = params.KI || 0;
   const kd = params.KD || 0;
-  tr.innerHTML =
-    `<td style="text-align:left;font-weight:600">${method}</td>` +
-    `<td>${kp.toFixed(2)}</td>` +
-    `<td>${ki.toFixed(2)}</td>` +
-    `<td>${kd.toFixed(3)}</td>` +
-    `<td><button class="btn btn-primary" data-tune-kp="${kp}" data-tune-ki="${ki}" data-tune-kd="${kd}">Apply</button></td>`;
+  const tdMethod = document.createElement('td');
+  tdMethod.style.textAlign = 'left'; tdMethod.style.fontWeight = '600';
+  tdMethod.textContent = method;
+  tr.appendChild(tdMethod);
+  for (const v of [kp.toFixed(2), ki.toFixed(2), kd.toFixed(3)]) {
+    const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+  }
+  const tdBtn = document.createElement('td');
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn btn-primary';
+  applyBtn.textContent = 'Apply';
+  applyBtn.dataset.tuneKp = String(kp);
+  applyBtn.dataset.tuneKi = String(ki);
+  applyBtn.dataset.tuneKd = String(kd);
+  tdBtn.appendChild(applyBtn);
+  tr.appendChild(tdBtn);
   tbody.appendChild(tr);
   // Bind apply button
   tr.querySelector('button').addEventListener('click', function() {

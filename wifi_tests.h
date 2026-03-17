@@ -246,7 +246,7 @@ static void wifi_test_autotune() {
         unsigned long dc = cnt - prev_cnt;
         prev_cnt = cnt;
         float raw = (dc / (float)cfg_encoder_holes) *
-                    (3.14159265f * cfg_wheel_diam_m) / dt;
+                    ((float)M_PI * cfg_wheel_diam_m) / dt;
         filtered = 0.5f * raw + 0.5f * filtered;
         if ((micros() - last) > 500000UL) filtered = 0;
 
@@ -312,7 +312,7 @@ static void wifi_test_autotune() {
         n_periods++;
     }
     float Tu = (n_periods > 0) ? sum_period / n_periods : 1.0f;
-    float Ku = 4.0f * RELAY_D / (3.14159f * amplitude);
+    float Ku = 4.0f * RELAY_D / ((float)M_PI * amplitude);
 
     // Raw tune parameters
     telem.print("$TR:TUNE,Ku="); telem.print(Ku, 2);

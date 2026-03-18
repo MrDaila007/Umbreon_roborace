@@ -3,8 +3,18 @@ name: CI
 on:
   push:
     branches: ['**']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+  schedule:
+    - cron: '0 2 * * 1'   # weekly Monday 02:00 UTC — catch dependency breakage
 
 permissions:
   contents: read
@@ -14,6 +24,7 @@ permissions:
 jobs:
   # ── Detect which files changed ──────────────────────────────────
   changes:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     outputs:
       firmware: ${{ steps.filter.outputs.firmware }}
@@ -82,7 +93,7 @@ jobs:
   # ── Firmware compilation ──────────────────────────────────────────
   firmware-build:
     needs: changes
-    if: needs.changes.outputs.firmware == 'true' || github.event_name == 'pull_request'
+    if: always() && (needs.changes.outputs.firmware == 'true' || github.event_name == 'pull_request' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,7 +127,7 @@ jobs:
   # ── Python lint ───────────────────────────────────────────────────
   python-lint:
     needs: changes
-    if: needs.changes.outputs.python == 'true' || github.event_name == 'pull_request'
+    if: always() && (needs.changes.outputs.python == 'true' || github.event_name == 'pull_request' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +145,7 @@ jobs:
   # ── Python import check ──────────────────────────────────────────
   python-import:
     needs: changes
-    if: needs.changes.outputs.python == 'true' || github.event_name == 'pull_request'
+    if: always() && (needs.changes.outputs.python == 'true' || github.event_name == 'pull_request' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -170,7 +181,7 @@ jobs:
   # ── ROS2 Docker build ────────────────────────────────────────────
   ros2-build:
     needs: changes
-    if: needs.changes.outputs.ros2 == 'true' || github.event_name == 'pull_request'
+    if: always() && (needs.changes.outputs.ros2 == 'true' || github.event_name == 'pull_request' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

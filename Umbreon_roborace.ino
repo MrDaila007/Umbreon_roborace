@@ -37,6 +37,8 @@
 #define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
 #endif
 
+#include "sensor_config.h"      // needs SENSOR_CONFIG; provides DEFAULT_FOD/SOD/ACD/CFD, SENSOR_COUNT, IDX_*
+
 // ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
 int   cfg_front_obstacle_dist = DEFAULT_FOD;

@@ -40,7 +40,6 @@
 // ─── All includes first (Arduino inserts prototypes after the last #include) ─
 #include "sensor_config.h"      // needs SENSOR_CONFIG; provides DEFAULT_FOD/SOD/ACD/CFD, SENSOR_COUNT, IDX_*
 #include "luna_car.h"
-#include "tests.h"              // hardware tests + WiFi remote tests
 #include <EEPROM.h>
 #include "eeprom_settings.h"    // CarSettings struct — must be last so prototypes see it
 
@@ -114,6 +113,8 @@ int manual_steer = 0;
 float manual_speed = 0.0f;
 
 Car car;
+
+#include "tests.h"              // hardware tests — needs cfg_* globals and Car defined above
 
 // ─── Telemetry helper ────────────────────────────────────────────────────────
 // Print sensor values as CSV (loops over SENSOR_COUNT)

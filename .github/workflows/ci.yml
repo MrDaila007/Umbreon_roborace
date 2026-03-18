@@ -12,6 +12,37 @@ permissions:
   checks: write
 
 jobs:
+  # ── Detect which files changed ──────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      firmware: ${{ steps.filter.outputs.firmware }}
+      python:   ${{ steps.filter.outputs.python }}
+      ros2:     ${{ steps.filter.outputs.ros2 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            firmware:
+              - '*.ino'
+              - '*.h'
+              - 'wifi_debug/**'
+              - '.github/workflows/ci.yml'
+            python:
+              - 'dashboard/**'
+              - 'simulation/**'
+              - 'requirements*.txt'
+              - 'ruff.toml'
+              - '.github/workflows/ci.yml'
+            ros2:
+              - 'ros2/**'
+              - 'dashboard/protocol.py'
+              - 'dashboard/car_config.py'
+              - '.github/workflows/ci.yml'
+
   # ── Code style review (inline PR annotations) ────────────────────
   style-review:
     if: github.event_name == 'pull_request'
@@ -50,6 +81,8 @@ jobs:
 
   # ── Firmware compilation ──────────────────────────────────────────
   firmware-build:
+    needs: changes
+    if: needs.changes.outputs.firmware == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +115,8 @@ jobs:
 
   # ── Python lint ───────────────────────────────────────────────────
   python-lint:
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +133,8 @@ jobs:
 
   # ── Python import check ──────────────────────────────────────────
   python-import:
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -132,6 +169,8 @@ jobs:
 
   # ── ROS2 Docker build ────────────────────────────────────────────
   ros2-build:
+    needs: changes
+    if: needs.changes.outputs.ros2 == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

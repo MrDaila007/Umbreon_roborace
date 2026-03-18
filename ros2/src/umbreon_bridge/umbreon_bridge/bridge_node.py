@@ -23,19 +23,35 @@ from std_srvs.srv import Trigger
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 from umbreon_bridge.tcp_client import TcpClient
-from umbreon_bridge.car_config import DEFAULTS, FLOAT_KEYS, READONLY_KEYS
+from umbreon_bridge.car_config import DEFAULTS, FLOAT_KEYS, READONLY_KEYS, SENSOR_CONFIGS
 from umbreon_bridge.protocol import (
     encode_ping, encode_get, encode_set, encode_save, encode_load,
     encode_reset, encode_start, encode_stop, encode_status, encode_drv,
 )
 
-# Sensor geometry (from car_config.py)
 SENSOR_FWD = 0.253   # m ahead of rear axle
-SENSOR_LAT = [0.09, 0.04, -0.04, -0.09]   # lateral offset (+ = left)
-SENSOR_DEG = [45.0, 0.0, 0.0, -45.0]       # relative to heading
-SENSOR_FRAMES = ['lidar_left', 'lidar_front_left', 'lidar_front_right', 'lidar_right']
 LIDAR_MIN_RANGE = 0.04   # 4 cm
-LIDAR_MAX_RANGE = 8.0    # 800 cm
+
+SENSOR_GEOM = {
+    4: {
+        "lat": [0.09, 0.04, -0.04, -0.09],
+        "deg": [45.0, 0.0, 0.0, -45.0],
+        "frames": ['lidar_left', 'lidar_front_left', 'lidar_front_right', 'lidar_right'],
+        "range_names": ['left', 'front_left', 'front_right', 'right'],
+        "max_range": 8.0,
+    },
+    6: {
+        "lat": [0.12, 0.09, 0.04, -0.04, -0.09, -0.12],
+        "deg": [90.0, 45.0, 0.0, 0.0, -45.0, -90.0],
+        "frames": ['lidar_hard_left', 'lidar_left', 'lidar_front_left',
+                    'lidar_front_right', 'lidar_right', 'lidar_hard_right'],
+        "range_names": ['hard_left', 'left', 'front_left', 'front_right', 'right', 'hard_right'],
+        "max_range": 2.0,
+    },
+}
+
+# Default to 4-sensor until we detect otherwise
+_sensor_count = 4
 
 
 def _yaw_quaternion(yaw: float) -> Quaternion:
@@ -69,12 +85,17 @@ class UmbreonBridgeNode(Node):
         # ── TCP client ────────────────────────────────────────────────
         self._client = TcpClient()
 
+        # ── Sensor config (updated when $CFG is received) ────────────
+        self._sensor_count = 4
+        self._sensor_geom = SENSOR_GEOM[4]
+
         # ── Publishers ────────────────────────────────────────────────
-        self._pub_ranges = []
-        range_names = ['left', 'front_left', 'front_right', 'right']
-        for name in range_names:
-            self._pub_ranges.append(
-                self.create_publisher(Range, f'/umbreon/range/{name}', 10))
+        self._pub_ranges = {}
+        for sc, geom in SENSOR_GEOM.items():
+            for name in geom['range_names']:
+                topic = f'/umbreon/range/{name}'
+                if topic not in self._pub_ranges:
+                    self._pub_ranges[topic] = self.create_publisher(Range, topic, 10)
         self._pub_imu = self.create_publisher(Imu, '/umbreon/imu', 10)
         self._pub_odom = self.create_publisher(Odometry, '/umbreon/odom', 10)
         self._pub_scan = self.create_publisher(LaserScan, '/umbreon/scan', 10)
@@ -173,17 +194,18 @@ class UmbreonBridgeNode(Node):
     # ══════════════════════════════════════════════════════════════════
 
     def _publish_static_tf(self):
+        geom = self._sensor_geom
         transforms = []
         now = self.get_clock().now().to_msg()
-        for i, frame in enumerate(SENSOR_FRAMES):
+        for i, frame in enumerate(geom['frames']):
             t = TransformStamped()
             t.header.stamp = now
             t.header.frame_id = 'base_link'
             t.child_frame_id = frame
             t.transform.translation.x = SENSOR_FWD
-            t.transform.translation.y = SENSOR_LAT[i]
+            t.transform.translation.y = geom['lat'][i]
             t.transform.translation.z = 0.0
-            yaw = math.radians(SENSOR_DEG[i])
+            yaw = math.radians(geom['deg'][i])
             t.transform.rotation = _yaw_quaternion(yaw)
             transforms.append(t)
 
@@ -236,38 +258,44 @@ class UmbreonBridgeNode(Node):
             return
 
         # ── Publish Range messages ────────────────────────────────────
-        sensors = [frame.s0, frame.s1, frame.s2, frame.s3]
-        for i, pub in enumerate(self._pub_ranges):
+        geom = self._sensor_geom
+        sensors = frame.sensors
+        max_range = geom['max_range']
+        for i, name in enumerate(geom['range_names']):
+            if i >= len(sensors):
+                break
+            topic = f'/umbreon/range/{name}'
+            pub = self._pub_ranges.get(topic)
+            if not pub:
+                continue
             r = Range()
             r.header.stamp = stamp
-            r.header.frame_id = SENSOR_FRAMES[i]
+            r.header.frame_id = geom['frames'][i]
             r.radiation_type = Range.INFRARED
-            r.field_of_view = math.radians(4.0)   # TF-Luna ~2 deg half-angle
+            r.field_of_view = math.radians(4.0)
             r.min_range = LIDAR_MIN_RANGE
-            r.max_range = LIDAR_MAX_RANGE
+            r.max_range = max_range
             r.range = sensors[i] / 1000.0   # cm*10 → metres
             pub.publish(r)
 
-        # ── Publish LaserScan (4 LiDARs combined) ─────────────────────
+        # ── Publish LaserScan (all sensors combined) ──────────────────
+        degs = geom['deg']
         scan = LaserScan()
         scan.header.stamp = stamp
         scan.header.frame_id = 'base_scan'
-        # Angles: sensor 0 at +45 deg, sensor 3 at -45 deg
-        # Order in scan: left to right = +45, +5, -5, -45
-        scan.angle_min = math.radians(-45.0)
-        scan.angle_max = math.radians(45.0)
-        scan.angle_increment = math.radians(30.0)  # ~90/3 between 4 points
+        # Sort sensors by angle ascending (most negative to most positive)
+        indexed = sorted(enumerate(degs), key=lambda x: x[1])
+        scan.angle_min = math.radians(indexed[0][1])
+        scan.angle_max = math.radians(indexed[-1][1])
+        n_sensors = len(indexed)
+        if n_sensors > 1:
+            scan.angle_increment = (scan.angle_max - scan.angle_min) / (n_sensors - 1)
         scan.time_increment = 0.0
         scan.scan_time = 0.04   # 25 Hz
         scan.range_min = LIDAR_MIN_RANGE
-        scan.range_max = LIDAR_MAX_RANGE
-        # Order from angle_min to angle_max: right(-45), FR(-5), FL(+5), left(+45)
-        scan.ranges = [
-            sensors[3] / 1000.0,   # -45 deg (right)
-            sensors[2] / 1000.0,   # ~-5 deg (front-right)
-            sensors[1] / 1000.0,   # ~+5 deg (front-left)
-            sensors[0] / 1000.0,   # +45 deg (left)
-        ]
+        scan.range_max = max_range
+        scan.ranges = [sensors[idx] / 1000.0 if idx < len(sensors) else max_range
+                       for idx, _ in indexed]
         self._pub_scan.publish(scan)
 
         # ── Publish IMU ───────────────────────────────────────────────
@@ -332,6 +360,15 @@ class UmbreonBridgeNode(Node):
 
     def _apply_cfg(self, params: dict):
         """Update node parameters from received $CFG response."""
+        # Detect sensor count change
+        if 'SNS' in params:
+            sc = int(params['SNS'])
+            if sc in SENSOR_GEOM and sc != self._sensor_count:
+                self._sensor_count = sc
+                self._sensor_geom = SENSOR_GEOM[sc]
+                self._publish_static_tf()  # re-publish with new sensor frames
+                self.get_logger().info(f'Sensor config updated to {sc} sensors')
+
         param_list = []
         for key, val in params.items():
             if key in READONLY_KEYS:

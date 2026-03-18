@@ -19,6 +19,7 @@ Command protocol:
   $RST         → $ACK  (reset to compile-time defaults)
 """
 
+import threading
 from dataclasses import dataclass, field
 from typing import Optional, List
 
@@ -55,17 +56,20 @@ class TelemetryFrame:
 
 # Module-level detected sensor count (updated by parse_header or auto-detect)
 _detected_sensor_count = 0  # 0 = not yet detected
+_sensor_count_lock = threading.Lock()
 
 
 def set_sensor_count(n: int):
     """Explicitly set the expected sensor count (called after $GET or header parse)."""
     global _detected_sensor_count
-    _detected_sensor_count = n
+    with _sensor_count_lock:
+        _detected_sensor_count = n
 
 
 def get_sensor_count() -> int:
     """Return the detected sensor count, or 4 as default."""
-    return _detected_sensor_count if _detected_sensor_count > 0 else 4
+    with _sensor_count_lock:
+        return _detected_sensor_count if _detected_sensor_count > 0 else 4
 
 
 def parse_telemetry(line: str) -> Optional[TelemetryFrame]:
@@ -81,7 +85,8 @@ def parse_telemetry(line: str) -> Optional[TelemetryFrame]:
     # Determine sensor count from field count:
     # Format: ms, [sensors...], steer, speed, target [, yaw, heading]
     # So n_fields = 1 + sensor_count + 3 (no IMU) or 1 + sensor_count + 5 (IMU)
-    sc = _detected_sensor_count
+    with _sensor_count_lock:
+        sc = _detected_sensor_count
     if sc > 0:
         # Use known sensor count
         has_imu = n_fields >= (1 + sc + 5)

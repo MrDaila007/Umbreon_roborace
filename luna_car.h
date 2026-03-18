@@ -71,7 +71,7 @@ volatile unsigned long _taho_iv    = 0;
 void taho_interrupt() {
     unsigned long now   = micros();
     unsigned long delta = now - _taho_last;
-    if (delta < 500UL) return;   // debounce 500µs
+    if (delta < 200UL) return;   // debounce 200µs (supports up to ~5 m/s with 62-hole encoder)
     _taho_count++;
     _taho_iv   = delta;
     _taho_last = now;
@@ -81,7 +81,7 @@ void taho_interrupt() {
 float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
     elapsed = max(elapsed, _taho_iv);
-    if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
+    if (_taho_iv == 0 || elapsed > 500000UL || cfg_encoder_holes <= 0) return 0.0f;
     return (3.14159265f * cfg_wheel_diam_m) /
            ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));
 }
@@ -323,8 +323,10 @@ void Car::pid_control_motor() {
     unsigned long delta_cnt = cnt - pid_prev_cnt;
     pid_prev_cnt = cnt;
 
-    float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
-                      (3.14159265f * cfg_wheel_diam_m) / dt;
+    float raw_speed = (cfg_encoder_holes > 0)
+        ? (delta_cnt / (float)cfg_encoder_holes) *
+          (3.14159265f * cfg_wheel_diam_m) / dt
+        : 0.0f;
 
     // EMA filter (0.7 = responsive, 0.3 = smooth)
     pid_filtered = 0.7f * raw_speed + 0.3f * pid_filtered;
@@ -422,6 +424,7 @@ bool Car::imu_init() {
 // Takes ~1 second (200 samples at 5ms intervals). Call after imu_init(), before driving.
 void Car::imu_calibrate() {
     if (!imu_ok) return;
+    Serial.println("IMU: calibrating gyro bias (~1s, keep still)...");
 
     const int SAMPLES = 200;
     float sum = 0.0f;
@@ -442,6 +445,11 @@ void Car::imu_calibrate() {
 
     if (count > 0)
         gyro_bias = sum / count;
+    Serial.print("IMU: bias = ");
+    Serial.print(gyro_bias, 3);
+    Serial.print(" deg/s (");
+    Serial.print(count);
+    Serial.println(" samples)");
 }
 
 #define IMU_EMA_ALPHA  0.3f    // EMA smoothing (0.0=max smooth, 1.0=no filter)

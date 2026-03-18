@@ -70,7 +70,7 @@ DEFAULTS = {
     "RCW":     1,     # RACE_CW (bool: 1=CW, 0=CCW)
     "STK":    25,     # stuck_time threshold
     "IMR":     1,     # IMU rotated 180° (negate yaw)
-    "SVR":     1,     # Servo reverse (negate steering)
+    "SVR":     0,     # Servo reverse (negate steering)
     "CAL":     0,     # Calibrated flag (auto-set after ESC+servo cal)
     "BEN":     0,     # Battery monitoring enabled
     "BML":   2.8,     # Battery divider multiplier (R1+R2)/R2

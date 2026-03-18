@@ -193,7 +193,7 @@ class UmbreonDashboard:
     def _toggle_record(self):
         if not self._recording:
             import datetime
-            fname = datetime.datetime.now().strftime("umbreon_%Y%m%d_%H%M%S.csv")
+            fname = datetime.datetime.now().strftime("umbreon_%Y%m%d_%H%M%S_%f.csv")
             try:
                 self._rec_file = open(fname, "w")
                 self._rec_file.write("#ms,s0,s1,s2,s3,steer,speed,target,yaw,heading\n")
@@ -211,11 +211,21 @@ class UmbreonDashboard:
     def _write_record(self, frame: TelemetryFrame):
         yaw = frame.yaw if frame.yaw is not None else ""
         heading = frame.heading if frame.heading is not None else ""
-        self._rec_file.write(
-            f"{frame.ms},{frame.s0},{frame.s1},{frame.s2},{frame.s3},"
-            f"{frame.steer},{frame.speed:.2f},{frame.target:.1f},"
-            f"{yaw},{heading}\n"
-        )
+        try:
+            self._rec_file.write(
+                f"{frame.ms},{frame.s0},{frame.s1},{frame.s2},{frame.s3},"
+                f"{frame.steer},{frame.speed:.2f},{frame.target:.1f},"
+                f"{yaw},{heading}\n"
+            )
+            self._rec_file.flush()
+        except OSError:
+            self._recording = False
+            self._rec_btn.configure(text="Record")
+            try:
+                self._rec_file.close()
+            except OSError:
+                pass
+            self._rec_file = None
 
     def run(self):
         """Start the main event loop."""

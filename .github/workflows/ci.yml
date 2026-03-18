@@ -114,6 +114,14 @@ jobs:
           python -c "import connection; print('connection OK')"
           python -c "import telemetry; print('telemetry OK')"
           python -c "import settings_file; print('settings_file OK')"
+          python -c "import plots; print('plots OK')"
+          python -c "import track_map; print('track_map OK')"
+          python -c "import settings_panel; print('settings_panel OK')"
+          python -c "import server; print('server OK')"
+          python -c "import app; print('app OK')"
+
+      - name: Install simulation dependencies
+        run: pip install -r simulation/requirements.txt
 
       - name: Check simulation imports
         working-directory: simulation

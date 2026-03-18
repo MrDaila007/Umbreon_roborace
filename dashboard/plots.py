@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from telemetry import TelemetryStore
-from car_config import SENSOR_NAMES, SENSOR_COLORS
+from telemetry import TelemetryStore, MAX_SENSORS
+from car_config import SENSOR_CONFIGS
 
 WINDOW = 250  # samples shown on plots
 
@@ -29,6 +29,7 @@ class TelemetryPlots:
     def __init__(self, parent, store: TelemetryStore):
         self.store = store
         self._x = np.arange(WINDOW)
+        self._sensor_count = 4  # updated dynamically
 
         self.fig = Figure(figsize=(8, 7), dpi=90)
         self.fig.set_facecolor("#f0f0f0")
@@ -42,10 +43,14 @@ class TelemetryPlots:
         self.ax_lidar.set_ylim(0, 3000)
         self.ax_lidar.grid(True, alpha=0.3)
         zeros = np.zeros(WINDOW)
+        # Pre-create lines for max sensor count; hide extras
         self.lines_lidar = []
-        for i, (name, color) in enumerate(zip(SENSOR_NAMES, SENSOR_COLORS)):
+        cfg6 = SENSOR_CONFIGS[6]
+        for i in range(MAX_SENSORS):
+            name = cfg6["names"][i] if i < len(cfg6["names"]) else f"s{i}"
+            color = cfg6["colors"][i] if i < len(cfg6["colors"]) else "gray"
             ln, = self.ax_lidar.plot(self._x, zeros, color=color,
-                                      linewidth=1, label=name)
+                                      linewidth=1, label=name, visible=(i < 4))
             self.lines_lidar.append(ln)
         self.ax_lidar.legend(loc="upper right", fontsize=7, ncol=4)
 
@@ -103,9 +108,21 @@ class TelemetryPlots:
                 a = np.concatenate([np.zeros(WINDOW - len(a)), a])
             return a
 
+        # Update sensor count and line visibility
+        sc = self.store.sensor_count
+        if sc != self._sensor_count:
+            self._sensor_count = sc
+            cfg = SENSOR_CONFIGS.get(sc, SENSOR_CONFIGS[4])
+            for i in range(MAX_SENSORS):
+                self.lines_lidar[i].set_visible(i < sc)
+                if i < sc and i < len(cfg["names"]):
+                    self.lines_lidar[i].set_label(cfg["names"][i])
+                    self.lines_lidar[i].set_color(cfg["colors"][i])
+            self.ax_lidar.legend(loc="upper right", fontsize=7, ncol=min(sc, 6))
+
         # LiDAR
-        for i, key in enumerate(["s0", "s1", "s2", "s3"]):
-            self.lines_lidar[i].set_ydata(_pad(data[key]))
+        for i in range(MAX_SENSORS):
+            self.lines_lidar[i].set_ydata(_pad(data[f"s{i}"]))
 
         # Speed
         self.line_speed.set_ydata(_pad(data["speed"]))

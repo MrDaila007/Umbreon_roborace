@@ -22,6 +22,8 @@
 
 #pragma GCC optimize("Ofast")
 
+#define FW_VERSION  "1.1.0"
+
 // ─── Feature flags ──────────────────────────────────────────────────────────
 // Sensor type constants (must be defined before SENSOR_CONFIG)
 #define SENSOR_4X_LUNA      1
@@ -288,9 +290,9 @@ static void cmd_get() {
     Serial1.print(",SOD="); Serial1.print(cfg_side_open_dist);
     Serial1.print(",ACD="); Serial1.print(cfg_all_close_dist);
     Serial1.print(",CFD="); Serial1.print(cfg_close_front_dist);
-    Serial1.print(",KP=");  Serial1.print(cfg_pid_kp, 2);
-    Serial1.print(",KI=");  Serial1.print(cfg_pid_ki, 2);
-    Serial1.print(",KD=");  Serial1.print(cfg_pid_kd, 2);
+    Serial1.print(",KP=");  Serial1.print(cfg_pid_kp, 4);
+    Serial1.print(",KI=");  Serial1.print(cfg_pid_ki, 4);
+    Serial1.print(",KD=");  Serial1.print(cfg_pid_kd, 4);
     Serial1.print(",MSP="); Serial1.print(cfg_min_speed);
     Serial1.print(",XSP="); Serial1.print(cfg_max_speed);
     Serial1.print(",BSP="); Serial1.print(cfg_min_bspeed);
@@ -298,7 +300,7 @@ static void cmd_get() {
     Serial1.print(",XNP="); Serial1.print(cfg_max_point);
     Serial1.print(",NTP="); Serial1.print(cfg_neutral_point);
     Serial1.print(",ENH="); Serial1.print(cfg_encoder_holes);
-    Serial1.print(",WDM="); Serial1.print(cfg_wheel_diam_m, 3);
+    Serial1.print(",WDM="); Serial1.print(cfg_wheel_diam_m, 4);
     Serial1.print(",LMS="); Serial1.print(cfg_loop_ms);
     Serial1.print(",SPD1="); Serial1.print(cfg_spd_clear, 1);
     Serial1.print(",SPD2="); Serial1.print(cfg_spd_blocked, 1);
@@ -311,12 +313,13 @@ static void cmd_get() {
     Serial1.print(",SVR="); Serial1.print(cfg_servo_reverse ? 1 : 0);
     Serial1.print(",CAL="); Serial1.print(cfg_calibrated ? 1 : 0);
     Serial1.print(",BEN="); Serial1.print(cfg_bat_enabled ? 1 : 0);
-    Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 2);
+    Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 4);
     Serial1.print(",BLV="); Serial1.print(cfg_bat_low, 1);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
     Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
     Serial1.print(",SNS="); Serial1.print(SENSOR_COUNT);
     Serial1.print(",SMX="); Serial1.print(MAX_SENSOR_RANGE);
+    Serial1.print(",FWV="); Serial1.print(FW_VERSION);
     Serial1.println();
 }
 
@@ -426,7 +429,7 @@ static void cmd_rst() {
     cfg_race_cw       = true;
     cfg_stuck_thresh  = 25;
     cfg_imu_rotate    = true;
-    cfg_servo_reverse = true;
+    cfg_servo_reverse = false;
     cfg_calibrated    = false;
     cfg_bat_enabled    = false;
     cfg_bat_multiplier = 2.8f;
@@ -991,7 +994,8 @@ void run_calibration() {
 // ─── Stuck / reverse helpers ──────────────────────────────────────────────────
 void go_back() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}   // wait until stopped
+    { unsigned long _deadline = millis() + 2000;
+      while (get_speed() > 0.1f && millis() < _deadline) {} }
     car.write_speed(-150);
     delay(200);
     car.write_speed(0);
@@ -1003,7 +1007,8 @@ void go_back() {
 
 void go_back_long() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}
+    { unsigned long _deadline = millis() + 2000;
+      while (get_speed() > 0.1f && millis() < _deadline) {} }
     car.write_speed(-150);
     delay(1000);
     car.write_speed(0);
@@ -1023,13 +1028,17 @@ void work() {
     int* s = car.read_sensors();
 
     // ── Steering ──────────────────────────────────────────────────────────────
+    // WALL_FOLLOW_BIAS: steering diff applied when both sides are open or all close,
+    // causes the car to hug the right wall (positive = steer right)
+    const int WALL_FOLLOW_BIAS = 800;
+
     int diff;
     bool f_l = s[IDX_FRONT_LEFT]  < cfg_front_obstacle_dist;  // front-left blocked
     bool f_r = s[IDX_FRONT_RIGHT] < cfg_front_obstacle_dist;  // front-right blocked
 
     if (s[IDX_LEFT] > cfg_side_open_dist && s[IDX_RIGHT] > cfg_side_open_dist) {
         // Both sides open — keep to right wall
-        diff = 800;
+        diff = WALL_FOLLOW_BIAS;
     } else {
         // Balance between walls
         diff = s[IDX_RIGHT] - s[IDX_LEFT];  // positive → steer right (away from right wall)
@@ -1041,7 +1050,7 @@ void work() {
         if (s[i] >= cfg_all_close_dist) { all_close = false; break; }
     }
     if (all_close) {
-        diff = 800;
+        diff = WALL_FOLLOW_BIAS;
     }
 
 #if HAS_HARD_SIDES
@@ -1156,6 +1165,7 @@ unsigned long next_loop = 0;
 
 void setup() {
     Serial.begin(115200);
+    Serial.print("Umbreon FW v"); Serial.println(FW_VERSION);
 
     // Try loading saved settings from EEPROM (falls back to compile-time defaults)
     EEPROM.begin(256);
@@ -1189,9 +1199,14 @@ void setup() {
     } else {
         delay(3700);   // allow ESC to arm and sensors to start streaming
     }
+
+    // Enable hardware watchdog (8-second timeout) — resets MCU if firmware hangs
+    rp2040.wdt_begin(8000);
 }
 
 void loop() {
+    rp2040.wdt_reset();  // feed hardware watchdog every loop iteration
+
     // Drain sensor data even between control ticks
     car.poll_lidars();
     if (cfg_bat_enabled) car.bat_update();  // read battery ADC (self-throttles to every 500ms)

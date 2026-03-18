@@ -31,6 +31,7 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - FQBN: `rp2040:rp2040:rpipico2` (board package: [arduino-pico](https://github.com/earlephilhower/arduino-pico) v5.5.1)
 - arduino-cli is bundled with Arduino IDE at `%LOCALAPPDATA%\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli`
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
+- External library (VL53L0X config): "Adafruit_VL53L0X" (Arduino Library Manager)
 - WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
 - WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
 

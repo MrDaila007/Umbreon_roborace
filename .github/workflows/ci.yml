@@ -74,6 +74,9 @@ jobs:
           arduino-cli core update-index
           arduino-cli core install rp2040:rp2040
 
+      - name: Install Arduino libraries
+        run: arduino-cli lib install "Adafruit_VL53L0X"
+
       - name: Compile firmware
         run: arduino-cli compile -b rp2040:rp2040:rpipico2 .
 

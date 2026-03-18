@@ -37,7 +37,12 @@
 #define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
 #endif
 
+// ─── All includes first (Arduino inserts prototypes after the last #include) ─
 #include "sensor_config.h"      // needs SENSOR_CONFIG; provides DEFAULT_FOD/SOD/ACD/CFD, SENSOR_COUNT, IDX_*
+#include "luna_car.h"
+#include "tests.h"              // hardware tests + WiFi remote tests
+#include <EEPROM.h>
+#include "eeprom_settings.h"    // CarSettings struct — must be last so prototypes see it
 
 // ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
@@ -108,11 +113,6 @@ unsigned long last_drv_ms = 0;
 int manual_steer = 0;
 float manual_speed = 0.0f;
 
-#include "luna_car.h"
-#include "tests.h"      // hardware tests + WiFi remote tests
-
-#include <EEPROM.h>
-
 Car car;
 
 // ─── Telemetry helper ────────────────────────────────────────────────────────
@@ -125,9 +125,6 @@ static void print_sensor_csv(int* s) {
     }
 }
 #endif
-
-// ─── EEPROM settings (struct in header so Arduino prototype generation sees it) ─
-#include "eeprom_settings.h"
 
 static uint8_t compute_checksum(const CarSettings& s) {
     uint8_t sum = 0;

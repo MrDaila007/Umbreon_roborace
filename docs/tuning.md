@@ -9,12 +9,14 @@ Parameters can be changed at runtime via the **dashboard** (see [dashboard.md](d
 
 ## Obstacle Thresholds
 
-| Key | Variable | Default | What to change |
-|---|---|---|---|
-| `FOD` | `cfg_front_obstacle_dist` | 1200 | Distance at which the car starts steering around a front obstacle. Increase for earlier reaction; decrease to get closer to walls before turning. |
-| `SOD` | `cfg_side_open_dist` | 1000 | If both side sensors read above this, the corridor is treated as open and the car biases toward the right wall. |
-| `ACD` | `cfg_all_close_dist` | 800 | If all 4 sensors read below this, the car forces a hard right turn. Increase if getting stuck in wide but tight spaces. |
-| `CFD` | `cfg_close_front_dist` | 201 | Emergency threshold — triggers stuck counter. Set to ~2× the minimum reliable TF-Luna range (~20 cm). |
+Defaults differ by sensor config because VL53L0X has shorter range (200 cm max vs 800 cm for TF-Luna).
+
+| Key | Variable | 4× TF-Luna | 6× VL53L0X | What to change |
+|---|---|---|---|---|
+| `FOD` | `cfg_front_obstacle_dist` | 1200 | 800 | Distance at which the car starts steering around a front obstacle. Increase for earlier reaction; decrease to get closer to walls before turning. |
+| `SOD` | `cfg_side_open_dist` | 1000 | 600 | If both side sensors read above this, the corridor is treated as open and the car biases toward the right wall. |
+| `ACD` | `cfg_all_close_dist` | 800 | 400 | If all sensors read below this, the car forces a hard right turn. Increase if getting stuck in wide but tight spaces. |
+| `CFD` | `cfg_close_front_dist` | 201 | 150 | Emergency threshold — triggers stuck counter. Set to ~2× the minimum reliable sensor range. |
 
 ---
 
@@ -131,13 +133,26 @@ Typical manual tuning:
 
 ---
 
-## TF-Luna Sensor Notes
+## Sensor Notes
+
+### TF-Luna (SENSOR_4X_LUNA)
 
 - Reliable range: **20 cm – 800 cm** (200–8000 in cm×10 units).
 - Readings below 20 cm may be unreliable — keep `CLOSE_FRONT_DIST` ≥ 200.
 - Default output rate from the factory: **100 Hz** (one frame every 10 ms).
   At 115200 baud, 9-byte frames arrive faster than the 40 ms control loop — no data loss expected.
 - If a sensor returns all zeros, check wiring (TX of TF-Luna → RX GPIO, 5 V power, GND).
+
+### VL53L0X (SENSOR_6X_VL53L0X)
+
+- Reliable range: **3 cm – 200 cm** (30–2000 in cm×10 units).
+- Returns 8190 mm on out-of-range / error — firmware treats as invalid (→ `9999`).
+- Continuous ranging mode with ~33 ms measurement period (~30 Hz per sensor).
+- I2C bus: Wire1 at 400 kHz (GP20 SDA, GP21 SCL). Does not conflict with IMU (Wire, GP0/GP1).
+- Each sensor needs a unique I2C address — assigned at boot via XSHUT pin sequencing (0x30–0x35).
+- The two extra "hard-side" sensors (90° left/right) provide wider corner awareness, blended into steering at 25% weight.
+- If an XSHUT pin is disconnected or a sensor fails to init, that sensor slot reads `9999` (very far) — the car continues with remaining sensors.
+- External library required: "Adafruit_VL53L0X" (`arduino-cli lib install "Adafruit_VL53L0X"`).
 
 ---
 

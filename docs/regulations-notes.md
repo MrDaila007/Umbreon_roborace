@@ -15,7 +15,7 @@ Source: `Roborace-Regulations-2025-11-12.pdf`
 | Max threshold / gap | 10 mm |
 | Overpass incline | ≤ 20° |
 
-**Implication for algorithm:** track is 95 – 175 cm wide. Our `SIDE_OPEN_DIST = 1000` (100 cm) and `FRONT_OBSTACLE_DIST = 1200` (120 cm) were chosen for this range.
+**Implication for algorithm:** track is 95 – 175 cm wide. For 4× TF-Luna: `SIDE_OPEN_DIST = 1000` (100 cm) and `FRONT_OBSTACLE_DIST = 1200` (120 cm). For 6× VL53L0X (shorter range): `SOD = 600` (60 cm) and `FOD = 800` (80 cm) — tighter but sufficient given the 200 cm max range.
 
 ---
 
@@ -59,7 +59,7 @@ Goal: maximum laps in time. Direction set by chief judge (recommended clockwise)
 - Penalty: +10 s per obstacle touched
 - Arrangement same for all participants
 
-**Our `FRONT_OBSTACLE_DIST = 1200` (120 cm) will trigger steering before hitting the 15×20 cm blocks.**
+**TF-Luna config: `FOD = 1200` (120 cm) will trigger steering well before hitting the blocks. VL53L0X config: `FOD = 800` (80 cm) — still sufficient margin given the shorter sensor range.**
 
 ---
 

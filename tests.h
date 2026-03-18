@@ -9,6 +9,15 @@
 // Then open Serial Monitor at 115200 and send command letters.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─── Sensor labels ─────────────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
+static const char* _sensor_labels[SENSOR_COUNT] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
+static const char* _sensor_short[SENSOR_COUNT]  = {"L", "FL", "FR", "R"};
+#elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
+static const char* _sensor_labels[SENSOR_COUNT] = {"HardL   ", "Left    ", "FrontL  ", "FrontR  ", "Right   ", "HardR   "};
+static const char* _sensor_short[SENSOR_COUNT]  = {"HL", "L", "FL", "FR", "R", "HR"};
+#endif
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 static void _flush_serial() { while (Serial.available()) Serial.read(); }
 
@@ -21,13 +30,12 @@ static char _wait_key(Car& car) {
 
 // ─── LiDAR diagnostics ─────────────────────────────────────────────────────
 
-// Print all 4 LiDAR distances to Serial (cm×10 units).
+// Print all sensor distances to Serial (cm×10 units).
 void print_sensors(Car& car) {
     car.poll_lidars();
     int* s = car.read_sensors();
-    const char* labels[4] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
-    for (int i = 0; i < 4; i++) {
-        Serial.print(labels[i]);
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        Serial.print(_sensor_labels[i]);
         Serial.print(": ");
         if (s[i] == 9999) {
             Serial.println("  --  (no reading)");
@@ -39,25 +47,24 @@ void print_sensors(Car& car) {
     Serial.println("--------------------");
 }
 
-// Stream all 4 distances as a tab-separated line (for Serial Plotter).
+// Stream all distances as a tab-separated line (for Serial Plotter).
 void plot_sensors(Car& car) {
     car.poll_lidars();
     int* s = car.read_sensors();
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < SENSOR_COUNT; i++) {
         Serial.print(s[i] == 9999 ? 0 : s[i] / 10);
-        if (i < 3) Serial.print('\t');
+        if (i < SENSOR_COUNT - 1) Serial.print('\t');
     }
     Serial.println();
 }
 
-// Continuous LiDAR stream with VT100 display. Press any key to stop.
+// Continuous sensor stream with VT100 display. Press any key to stop.
 void test_lidar(Car& car, unsigned long duration_ms = 0) {
-    Serial.println("\n=== LiDAR Test ===");
+    Serial.println("\n=== Sensor Test ===");
     Serial.println("Press any key to stop.\n");
     Serial.println("Sensor    | Distance  | Status");
     Serial.println("----------|-----------|--------");
 
-    const char* names[4] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
     unsigned long start = millis();
 
     while (!Serial.available()) {
@@ -65,9 +72,12 @@ void test_lidar(Car& car, unsigned long duration_ms = 0) {
         car.poll_lidars();
         int* s = car.read_sensors();
 
-        Serial.print("\x1b[4A");
-        for (int i = 0; i < 4; i++) {
-            Serial.print(names[i]);
+        // Move cursor up by SENSOR_COUNT lines
+        Serial.print("\x1b[");
+        Serial.print(SENSOR_COUNT);
+        Serial.print("A");
+        for (int i = 0; i < SENSOR_COUNT; i++) {
+            Serial.print(_sensor_labels[i]);
             Serial.print(" | ");
             if (s[i] != 9999) {
                 Serial.print(s[i] / 10);
@@ -80,7 +90,7 @@ void test_lidar(Car& car, unsigned long duration_ms = 0) {
         delay(100);
     }
     _flush_serial();
-    Serial.println("\nLiDAR test done.");
+    Serial.println("\nSensor test done.");
 }
 
 // ─── Steering tests ─────────────────────────────────────────────────────────
@@ -584,24 +594,22 @@ void test_autotune(Car& car) {
     Serial.println("Auto-tune complete.");
 }
 
-// ─── Reactive Steering (LiDAR → Servo) ──────────────────────────────────────
+// ─── Reactive Steering (Sensor → Servo) ──────────────────────────────────────
 void test_reactive(Car& car) {
     Serial.println("\n=== Reactive Steering Test ===");
-    Serial.println("LiDAR controls servo in real-time. Press any key to stop.\n");
-    Serial.println("  Left(L)  FrontL(FL)  FrontR(FR)  Right(R)  -> Steer");
-    Serial.println("  -------------------------------------------------------");
+    Serial.println("Sensors control servo in real-time. Press any key to stop.\n");
 
-    const int CLOSE_DIST = 1200;   // cm×10
-    const int FAR_DIST   = 3000;   // cm×10
+    const int CLOSE_DIST = cfg_front_obstacle_dist;
+    const int FAR_DIST   = 3000;
 
     while (!Serial.available()) {
         car.poll_lidars();
         int* s = car.read_sensors();
 
-        int L  = (s[0] != 9999) ? s[0] : 9999;
-        int FL = (s[1] != 9999) ? s[1] : 9999;
-        int FR = (s[2] != 9999) ? s[2] : 9999;
-        int R  = (s[3] != 9999) ? s[3] : 9999;
+        int L  = s[IDX_LEFT];
+        int FL = s[IDX_FRONT_LEFT];
+        int FR = s[IDX_FRONT_RIGHT];
+        int R  = s[IDX_RIGHT];
 
         // Balance left vs right
         float diff = (float)(R - L);
@@ -610,6 +618,12 @@ void test_reactive(Car& car) {
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
 
+#if HAS_HARD_SIDES
+        int HL = s[IDX_HARD_LEFT];
+        int HR = s[IDX_HARD_RIGHT];
+        diff += (float)(HR - HL) * 0.3f;
+#endif
+
         // Normalize to -1000..+1000 for Car::write_steer
         float steer_f = diff / (float)FAR_DIST;
         steer_f = constrain(steer_f, -1.0f, 1.0f);
@@ -617,10 +631,12 @@ void test_reactive(Car& car) {
         car.write_steer(steer_val);
 
         Serial.print("\x1b[1A");
-        Serial.print("  L="); Serial.print(L / 10);
-        Serial.print("  FL="); Serial.print(FL / 10);
-        Serial.print("  FR="); Serial.print(FR / 10);
-        Serial.print("  R="); Serial.print(R / 10);
+        for (int i = 0; i < SENSOR_COUNT; i++) {
+            Serial.print("  ");
+            Serial.print(_sensor_short[i]);
+            Serial.print("=");
+            Serial.print(s[i] / 10);
+        }
         Serial.print("  -> steer="); Serial.print(steer_val);
         if (steer_f < -0.2f)      Serial.print("  <-LEFT   ");
         else if (steer_f > 0.2f)  Serial.print("  RIGHT->  ");
@@ -646,13 +662,13 @@ void test_run_all(Car& car) {
 // ─── Interactive test menu ──────────────────────────────────────────────────
 void test_menu_help() {
     Serial.println("\nCommands:");
-    Serial.println("  l  LiDAR stream");
+    Serial.println("  l  Sensor stream");
     Serial.println("  s  Servo sweep");
     Serial.println("  t  Tachometer live");
     Serial.println("  e  ESC arm test  (car will move briefly!)");
     Serial.println("  p  Speed hold (PID, +/- to change target)");
     Serial.println("  u  PID auto-tune (relay method, ~30s)");
-    Serial.println("  r  Reactive steering (LiDAR -> servo)");
+    Serial.println("  r  Reactive steering (sensor -> servo)");
     Serial.println("  a  Run all tests in sequence");
     Serial.println("  ?  This help\n");
 }
@@ -660,6 +676,8 @@ void test_menu_help() {
 void test_menu_init() {
     Serial.println("\n============================");
     Serial.println("  Umbreon — Hardware Test");
+    Serial.print("  Sensors: ");
+    Serial.println(SENSOR_COUNT);
     Serial.println("============================");
     test_menu_help();
 }

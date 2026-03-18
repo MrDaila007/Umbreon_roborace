@@ -4,9 +4,11 @@ protocol.py — Telemetry CSV parser and command protocol encoder/decoder.
 Telemetry lines start with digits (timestamp), commands start with '$',
 headers start with '#'.
 
-CSV telemetry format:
-  No IMU (8 fields): ms, s0, s1, s2, s3, steer, speed, target
-  With IMU (10 fields): ms, s0, s1, s2, s3, steer, speed, target, yaw, heading
+CSV telemetry format (dynamic sensor count):
+  4 sensors, no IMU  (8 fields):  ms, s0, s1, s2, s3, steer, speed, target
+  4 sensors, with IMU (10 fields): ms, s0, s1, s2, s3, steer, speed, target, yaw, heading
+  6 sensors, no IMU  (10 fields): ms, s0, s1, s2, s3, s4, s5, steer, speed, target
+  6 sensors, with IMU (12 fields): ms, s0, s1, s2, s3, s4, s5, steer, speed, target, yaw, heading
 
 Command protocol:
   $PING        → $PONG
@@ -18,7 +20,7 @@ Command protocol:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 from car_config import FLOAT_KEYS
 
@@ -27,16 +29,43 @@ from car_config import FLOAT_KEYS
 class TelemetryFrame:
     """One parsed telemetry line."""
     ms: int = 0
-    s0: int = 0
-    s1: int = 0
-    s2: int = 0
-    s3: int = 0
+    sensors: List[int] = field(default_factory=lambda: [0, 0, 0, 0])
     steer: int = 0
     speed: float = 0.0
     target: float = 0.0
     yaw: Optional[float] = None
     heading: Optional[float] = None
     has_imu: bool = False
+    sensor_count: int = 4
+
+    # Backward-compatible accessors for s0–s5
+    @property
+    def s0(self): return self.sensors[0] if len(self.sensors) > 0 else 0
+    @property
+    def s1(self): return self.sensors[1] if len(self.sensors) > 1 else 0
+    @property
+    def s2(self): return self.sensors[2] if len(self.sensors) > 2 else 0
+    @property
+    def s3(self): return self.sensors[3] if len(self.sensors) > 3 else 0
+    @property
+    def s4(self): return self.sensors[4] if len(self.sensors) > 4 else 0
+    @property
+    def s5(self): return self.sensors[5] if len(self.sensors) > 5 else 0
+
+
+# Module-level detected sensor count (updated by parse_header or auto-detect)
+_detected_sensor_count = 0  # 0 = not yet detected
+
+
+def set_sensor_count(n: int):
+    """Explicitly set the expected sensor count (called after $GET or header parse)."""
+    global _detected_sensor_count
+    _detected_sensor_count = n
+
+
+def get_sensor_count() -> int:
+    """Return the detected sensor count, or 4 as default."""
+    return _detected_sensor_count if _detected_sensor_count > 0 else 4
 
 
 def parse_telemetry(line: str) -> Optional[TelemetryFrame]:
@@ -45,22 +74,43 @@ def parse_telemetry(line: str) -> Optional[TelemetryFrame]:
     if not line or not line[0].isdigit():
         return None
     parts = line.split(",")
-    if len(parts) < 8:
+    n_fields = len(parts)
+    if n_fields < 8:
         return None
+
+    # Determine sensor count from field count:
+    # Format: ms, [sensors...], steer, speed, target [, yaw, heading]
+    # So n_fields = 1 + sensor_count + 3 (no IMU) or 1 + sensor_count + 5 (IMU)
+    sc = _detected_sensor_count
+    if sc > 0:
+        # Use known sensor count
+        has_imu = n_fields >= (1 + sc + 5)
+    else:
+        # Auto-detect: 12 fields → 6 sensors + IMU, 10 → 4 + IMU, 8 → 4 no IMU
+        if n_fields >= 12:
+            sc = 6
+            has_imu = True
+        elif n_fields >= 10:
+            sc = 4
+            has_imu = True
+        else:
+            sc = 4
+            has_imu = False
+
     try:
+        sensors = [int(parts[1 + i]) for i in range(sc)]
+        si = 1 + sc  # index of steer field
         f = TelemetryFrame(
             ms=int(parts[0]),
-            s0=int(parts[1]),
-            s1=int(parts[2]),
-            s2=int(parts[3]),
-            s3=int(parts[4]),
-            steer=int(parts[5]),
-            speed=float(parts[6]),
-            target=float(parts[7]),
+            sensors=sensors,
+            steer=int(parts[si]),
+            speed=float(parts[si + 1]),
+            target=float(parts[si + 2]),
+            sensor_count=sc,
         )
-        if len(parts) >= 10:
-            f.yaw = float(parts[8])
-            f.heading = float(parts[9])
+        if has_imu and n_fields >= si + 5:
+            f.yaw = float(parts[si + 3])
+            f.heading = float(parts[si + 4])
             f.has_imu = True
         return f
     except (ValueError, IndexError):
@@ -68,11 +118,18 @@ def parse_telemetry(line: str) -> Optional[TelemetryFrame]:
 
 
 def parse_header(line: str) -> Optional[list]:
-    """Parse a '#'-prefixed header line into column names."""
+    """Parse a '#'-prefixed header line into column names.
+    Also auto-detects sensor count from sensor column names (s0, s1, ...).
+    """
     line = line.strip()
     if not line.startswith("#"):
         return None
-    return [c.strip() for c in line[1:].split(",")]
+    cols = [c.strip() for c in line[1:].split(",")]
+    # Count sensor columns (s0, s1, s2, ...)
+    sc = sum(1 for c in cols if c.startswith("s") and c[1:].isdigit())
+    if sc > 0:
+        set_sensor_count(sc)
+    return cols
 
 
 # ─── Command encoding ────────────────────────────────────────────────────────
@@ -144,6 +201,9 @@ def parse_response(line: str) -> dict:
                         params[k] = int(v)
                 except ValueError:
                     params[k] = v
+        # Auto-detect sensor count from SNS parameter
+        if "SNS" in params:
+            set_sensor_count(int(params["SNS"]))
         return {"type": "cfg", "params": params}
     elif line.startswith("$STS:"):
         state = line[5:]

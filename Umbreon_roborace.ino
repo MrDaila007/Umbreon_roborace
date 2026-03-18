@@ -6,13 +6,11 @@
  * | |\ \ (_) | |_) | (_) | | | (_| | (_|  __/
  * \_| \_\___/|_.__/ \___/|_|  \__,_|\___\___|
  *
- * Umbreon — RP2350 (Pico 2) + 4× TF-Luna LiDAR
+ * Umbreon — RP2350 (Pico 2) autonomous roborace car
  *
- * Sensor layout (SerialPIO RX pins):
- *   s[0] Left        GP2
- *   s[1] Front-Left  GP3
- *   s[2] Front-Right GP4
- *   s[3] Right       GP5
+ * Sensor configurations (compile-time selection via SENSOR_CONFIG):
+ *   SENSOR_4X_LUNA    — 4× TF-Luna LiDAR (SerialPIO UART)
+ *   SENSOR_6X_VL53L0X — 6× VL53L0X ToF (I2C on Wire1)
  *
  * Actuators:
  *   Steering servo   GP10
@@ -20,12 +18,15 @@
  *   Tachometer       GP13 (RISING interrupt)
  *
  * Distance units: cm×10  (e.g. 1200 = 120 cm, 200 = 20 cm)
- *   TF-Luna range: ~20 cm … 800 cm  →  200 … 8000 in these units
  */
 
 #pragma GCC optimize("Ofast")
 
 // ─── Feature flags ──────────────────────────────────────────────────────────
+// Sensor type constants (must be defined before SENSOR_CONFIG)
+#define SENSOR_4X_LUNA      1
+#define SENSOR_6X_VL53L0X   2
+#define SENSOR_CONFIG   SENSOR_6X_VL53L0X   // SENSOR_4X_LUNA or SENSOR_6X_VL53L0X
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
 #define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
 
@@ -34,12 +35,12 @@
 #define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
 #endif
 
-// ─── Runtime-configurable globals (defaults match original #defines) ────────
+// ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
-int   cfg_front_obstacle_dist = 1200;   // 120 cm — start steering around
-int   cfg_side_open_dist      = 1000;   // 100 cm — side is "open"
-int   cfg_all_close_dist      =  800;   //  80 cm — surrounded, force turn
-int   cfg_close_front_dist    =  201;   //  20 cm — emergency reverse
+int   cfg_front_obstacle_dist = DEFAULT_FOD;
+int   cfg_side_open_dist      = DEFAULT_SOD;
+int   cfg_all_close_dist      = DEFAULT_ACD;
+int   cfg_close_front_dist    = DEFAULT_CFD;
 
 // PID coefficients (scaled for µs ESC output, ~14× from original degree-based gains)
 float cfg_pid_kp   = 60.0f;
@@ -110,14 +111,26 @@ float manual_speed = 0.0f;
 
 Car car;
 
+// ─── Telemetry helper ────────────────────────────────────────────────────────
+// Print sensor values as CSV (loops over SENSOR_COUNT)
+#if USE_WIFI_DEBUG
+static void print_sensor_csv(int* s) {
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        Serial1.print(s[i]);
+        Serial1.print(',');
+    }
+}
+#endif
+
 // ─── EEPROM settings ────────────────────────────────────────────────────────
 #define SETTINGS_MAGIC   0x554D4252   // "UMBR"
-#define SETTINGS_VERSION 5
+#define SETTINGS_VERSION 6
 #define SETTINGS_ADDR    0
 
 struct __attribute__((packed)) CarSettings {
     uint32_t magic;
     uint8_t  version;
+    uint8_t  sensor_config;       // SENSOR_CONFIG value — reject if mismatch
     // Obstacle thresholds
     int16_t  front_obstacle_dist;
     int16_t  side_open_dist;
@@ -173,6 +186,7 @@ static uint8_t compute_checksum(const CarSettings& s) {
 static void populate_struct(CarSettings& s) {
     s.magic   = SETTINGS_MAGIC;
     s.version = SETTINGS_VERSION;
+    s.sensor_config = SENSOR_CONFIG;
     s.front_obstacle_dist = (int16_t)cfg_front_obstacle_dist;
     s.side_open_dist      = (int16_t)cfg_side_open_dist;
     s.all_close_dist      = (int16_t)cfg_all_close_dist;
@@ -242,6 +256,9 @@ bool load_settings() {
     EEPROM.get(SETTINGS_ADDR, s);
     if (s.magic != SETTINGS_MAGIC || s.version != SETTINGS_VERSION)
         return false;
+    // Reject settings saved with a different sensor configuration
+    if (s.sensor_config != SENSOR_CONFIG)
+        return false;
     if (compute_checksum(s) != s.checksum)
         return false;
     apply_struct(s);
@@ -298,6 +315,8 @@ static void cmd_get() {
     Serial1.print(",BLV="); Serial1.print(cfg_bat_low, 1);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
     Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
+    Serial1.print(",SNS="); Serial1.print(SENSOR_COUNT);
+    Serial1.print(",SMX="); Serial1.print(MAX_SENSOR_RANGE);
     Serial1.println();
 }
 
@@ -343,7 +362,7 @@ static bool parse_set_pair(const char* pair) {
     else if (strcmp(key, "BEN")  == 0) cfg_bat_enabled          = atoi(val) != 0;
     else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = atof(val);
     else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = atof(val);
-    // IMU, DBG are read-only — silently ignore
+    // IMU, DBG, SNS, SMX are read-only — silently ignore
     else return false;
 
     return true;
@@ -382,11 +401,11 @@ static void cmd_load() {
 }
 
 static void cmd_rst() {
-    // Reset to compile-time defaults
-    cfg_front_obstacle_dist = 1200;
-    cfg_side_open_dist      = 1000;
-    cfg_all_close_dist      =  800;
-    cfg_close_front_dist    =  201;
+    // Reset to compile-time defaults (sensor-config-specific thresholds)
+    cfg_front_obstacle_dist = DEFAULT_FOD;
+    cfg_side_open_dist      = DEFAULT_SOD;
+    cfg_all_close_dist      = DEFAULT_ACD;
+    cfg_close_front_dist    = DEFAULT_CFD;
     cfg_pid_kp   = 60.0f;
     cfg_pid_ki   = 40.0f;
     cfg_pid_kd   = 6.0f;
@@ -429,10 +448,17 @@ static void wifi_test_lidar() {
         if (wifi_check_abort()) break;
         car.poll_lidars();
         int* s = car.read_sensors();
-        Serial1.print("$T:LIDAR,L="); Serial1.print(s[0]);
-        Serial1.print(",FL=");        Serial1.print(s[1]);
-        Serial1.print(",FR=");        Serial1.print(s[2]);
-        Serial1.print(",R=");         Serial1.print(s[3]);
+        Serial1.print("$T:LIDAR");
+#if SENSOR_COUNT >= 6
+        Serial1.print(",HL="); Serial1.print(s[IDX_HARD_LEFT]);
+#endif
+        Serial1.print(",L=");  Serial1.print(s[IDX_LEFT]);
+        Serial1.print(",FL="); Serial1.print(s[IDX_FRONT_LEFT]);
+        Serial1.print(",FR="); Serial1.print(s[IDX_FRONT_RIGHT]);
+        Serial1.print(",R=");  Serial1.print(s[IDX_RIGHT]);
+#if SENSOR_COUNT >= 6
+        Serial1.print(",HR="); Serial1.print(s[IDX_HARD_RIGHT]);
+#endif
         Serial1.println();
         delay(100);
     }
@@ -741,7 +767,7 @@ static void wifi_test_autotune() {
 }
 
 static void wifi_test_reactive() {
-    const int CLOSE_DIST = 1200;
+    const int CLOSE_DIST = cfg_front_obstacle_dist;
     const int FAR_DIST   = 3000;
 
     unsigned long start = millis();
@@ -750,10 +776,17 @@ static void wifi_test_reactive() {
         car.poll_lidars();
         int* s = car.read_sensors();
 
-        int L = s[0], FL = s[1], FR = s[2], R = s[3];
+        int L = s[IDX_LEFT], FL = s[IDX_FRONT_LEFT];
+        int FR = s[IDX_FRONT_RIGHT], R = s[IDX_RIGHT];
         float diff = (float)(R - L);
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+
+#if HAS_HARD_SIDES
+        // Blend hard-side sensors for wider awareness
+        int HL = s[IDX_HARD_LEFT], HR = s[IDX_HARD_RIGHT];
+        diff += (float)(HR - HL) * 0.3f;
+#endif
 
         float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
         int steer_val = (int)(steer_f * 1000.0f);
@@ -908,10 +941,7 @@ static void send_idle_telemetry() {
 #endif
     int* s = car.read_sensors();
     Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
+    print_sensor_csv(s);
     Serial1.print(0);                     Serial1.print(',');
     Serial1.print(get_speed(), 2);        Serial1.print(',');
     Serial1.print(0.0, 1);
@@ -985,7 +1015,7 @@ void go_back_long() {
 
 // ─── Main control logic ───────────────────────────────────────────────────────
 void work() {
-    // Bring LiDAR data up to date before reading
+    // Bring sensor data up to date before reading
     car.poll_lidars();
 #if USE_IMU
     car.imu_update();
@@ -994,22 +1024,30 @@ void work() {
 
     // ── Steering ──────────────────────────────────────────────────────────────
     int diff;
-    bool f_l = s[1] < cfg_front_obstacle_dist;  // front-left blocked
-    bool f_r = s[2] < cfg_front_obstacle_dist;  // front-right blocked
+    bool f_l = s[IDX_FRONT_LEFT]  < cfg_front_obstacle_dist;  // front-left blocked
+    bool f_r = s[IDX_FRONT_RIGHT] < cfg_front_obstacle_dist;  // front-right blocked
 
-    if (s[0] > cfg_side_open_dist && s[3] > cfg_side_open_dist) {
+    if (s[IDX_LEFT] > cfg_side_open_dist && s[IDX_RIGHT] > cfg_side_open_dist) {
         // Both sides open — keep to right wall
         diff = 800;
     } else {
         // Balance between walls
-        diff = s[3] - s[0];  // positive → steer right (away from right wall)
+        diff = s[IDX_RIGHT] - s[IDX_LEFT];  // positive → steer right (away from right wall)
     }
 
     // All sensors close: hard turn to escape
-    if (s[0] < cfg_all_close_dist && s[1] < cfg_all_close_dist &&
-        s[2] < cfg_all_close_dist && s[3] < cfg_all_close_dist) {
+    bool all_close = true;
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        if (s[i] >= cfg_all_close_dist) { all_close = false; break; }
+    }
+    if (all_close) {
         diff = 800;
     }
+
+#if HAS_HARD_SIDES
+    // Blend hard-side sensors for wider corner awareness
+    diff += (int)((s[IDX_HARD_RIGHT] - s[IDX_HARD_LEFT]) * 0.25f);
+#endif
 
     // ── Speed ─────────────────────────────────────────────────────────────────
     int how_clear = (int)f_l + (int)f_r;  // 0 = path clear, 1-2 = blocked
@@ -1029,10 +1067,7 @@ void work() {
     // ── Telemetry ────────────────────────────────────────────────────────────
 #if USE_WIFI_DEBUG
     Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
+    print_sensor_csv(s);
     Serial1.print((int)(diff * coef));    Serial1.print(',');
     Serial1.print(get_speed(), 2);        Serial1.print(',');
     Serial1.print(spd, 1);
@@ -1045,8 +1080,8 @@ void work() {
 #endif
 
     // ── Stuck detection ───────────────────────────────────────────────────────
-    bool c_fl = s[1] < cfg_close_front_dist;
-    bool c_fr = s[2] < cfg_close_front_dist;
+    bool c_fl = s[IDX_FRONT_LEFT]  < cfg_close_front_dist;
+    bool c_fr = s[IDX_FRONT_RIGHT] < cfg_close_front_dist;
     bool low_speed = get_speed() < 0.1f;
 
     static int stuck_time = 0;
@@ -1135,23 +1170,29 @@ void setup() {
     Serial1.setTX(DEBUG_TX_PIN);
     Serial1.setRX(DEBUG_RX_PIN);
     Serial1.begin(115200);
-    Serial1.println("#ms,s0,s1,s2,s3,steer,speed,target"
+    // Dynamic header based on sensor count
+    Serial1.print("#ms");
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        Serial1.print(",s");
+        Serial1.print(i);
+    }
+    Serial1.print(",steer,speed,target");
 #if USE_IMU
-                    ",yaw,heading"
+    Serial1.print(",yaw,heading");
 #endif
-                    );
+    Serial1.println();
 #endif
 
     // Run ESC+servo calibration on first boot (or after $RST + reboot)
     if (!cfg_calibrated) {
         run_calibration();
     } else {
-        delay(3700);   // allow ESC to arm and LiDARs to start streaming
+        delay(3700);   // allow ESC to arm and sensors to start streaming
     }
 }
 
 void loop() {
-    // Drain LiDAR bytes even between control ticks
+    // Drain sensor data even between control ticks
     car.poll_lidars();
     if (cfg_bat_enabled) car.bat_update();  // read battery ADC (self-throttles to every 500ms)
 
@@ -1183,10 +1224,7 @@ void loop() {
             car.pid_control_motor();
 #if USE_WIFI_DEBUG
             Serial1.print(millis());              Serial1.print(',');
-            Serial1.print(s[0]);                  Serial1.print(',');
-            Serial1.print(s[1]);                  Serial1.print(',');
-            Serial1.print(s[2]);                  Serial1.print(',');
-            Serial1.print(s[3]);                  Serial1.print(',');
+            print_sensor_csv(s);
             Serial1.print(manual_steer);          Serial1.print(',');
             Serial1.print(get_speed(), 2);        Serial1.print(',');
             Serial1.print(manual_speed, 1);

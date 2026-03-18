@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """
 sim.py — Umbreon roborace algorithm simulator
-2-D top-down environment, kinematic bicycle model, 4× LiDAR rays.
+2-D top-down environment, kinematic bicycle model, configurable sensor count.
 
     pip install numpy matplotlib
-    python sim.py              # live animation
+    python sim.py              # live animation (4 sensors default)
+    python sim.py --sensors 6  # live animation with 6 sensors
     python sim.py --fast       # pre-compute full run and plot path + graphs
     python sim.py --ticks N    # control how many 40-ms ticks to run (default 1500)
     python sim.py --bridge     # run sim + TCP server for dashboard testing
 
 Car dimensions (measured):
-    Length: 290 mm   Wheelbase: 173 mm   Track: 120 mm   Wheel ⌀: 60 mm
+    Length: 290 mm   Wheelbase: 173 mm   Track: 120 mm   Wheel dia: 60 mm
 
-Sensor layout (bumper-mounted, 80 mm ahead of front axle):
-    s[0] L-Out  45° left  of heading, 90 mm left  of centre
-    s[1] L-Fwd  0°  (straight),       40 mm left  of centre
-    s[2] R-Fwd  0°  (straight),       40 mm right of centre
-    s[3] R-Out  45° right of heading,  90 mm right of centre
+Sensor configurations:
+  4-sensor (TF-Luna):
+    s[0] L-Out  45deg left,  90mm left  of centre
+    s[1] L-Fwd  0deg,        40mm left  of centre
+    s[2] R-Fwd  0deg,        40mm right of centre
+    s[3] R-Out  45deg right, 90mm right of centre
+
+  6-sensor (VL53L0X):
+    s[0] H-Left  90deg left,  120mm left  of centre
+    s[1] L-Out   45deg left,   90mm left  of centre
+    s[2] L-Fwd   0deg,         40mm left  of centre
+    s[3] R-Fwd   0deg,         40mm right of centre
+    s[4] R-Out   45deg right,  90mm right of centre
+    s[5] H-Right 90deg right, 120mm right of centre
 
 Steering convention (matches write_steer() inversion):
-    steer_cmd > 0  →  RIGHT turn
-    steer_cmd < 0  →  LEFT  turn
+    steer_cmd > 0  ->  RIGHT turn
+    steer_cmd < 0  ->  LEFT  turn
 """
 
 import argparse
@@ -31,10 +41,6 @@ import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 
 # ─── Algorithm constants (mirrors Umbreon_roborace.ino / luna_car.h) ─────────
-FRONT_OBSTACLE_DIST =  600   # cm×10  =  60 cm  (was 1200; tuned for 45-deg sensors)
-SIDE_OPEN_DIST      = 1000   # cm×10  = 100 cm
-ALL_CLOSE_DIST      =  800   # cm×10  =  80 cm
-CLOSE_FRONT_DIST    =  201   # cm×10  = ~20 cm
 LOOP_MS             =   40   # ms — control period
 
 # ─── Car physics (measured from real Umbreon) ────────────────────────────────
@@ -42,28 +48,53 @@ CAR_LENGTH   = 0.290           # m  (total body length)
 WHEELBASE    = 0.173           # m  (front-rear axle centre-to-centre)
 TRACK_WIDTH  = 0.120           # m  (rear axle, wheel-to-wheel min)
 WHEEL_DIAM   = 0.060           # m  (60 mm)
-FRONT_OH     = 0.080           # m  (front axle to front bumper ≈ sensor line)
+FRONT_OH     = 0.080           # m  (front axle to front bumper ~ sensor line)
 REAR_OH      = CAR_LENGTH - WHEELBASE - FRONT_OH  # 37 mm
 MAX_STR_RAD  = np.radians(28)  # physical max steering angle
 SPEED_TC     = 5.0             # speed time-constant (Hz) — first-order response
 
-# ─── Sensor layout ────────────────────────────────────────────────────────────
-# All 4 TF-Luna sensors on front bumper, 80 mm ahead of front axle centre.
-# Lateral offsets from centreline (measured on car):
-#   Central pair (FL, FR): 80 mm apart  → ±40 mm from centre
-#   Outer pair  (L, R):   50 mm further → ±90 mm from centre
+# ─── Sensor configurations ───────────────────────────────────────────────────
 SENSOR_FWD_M  = WHEELBASE + 0.080          # 253 mm ahead of rear axle
-SENSOR_DEG    = [45.0,  0.0,  0.0, -45.0]  # relative to car heading
-SENSOR_LAT_M  = [0.09,  0.04, -0.04, -0.09]  # lateral offset (+ = left)
-SENSOR_NAMES  = ["L-Out", "L-Fwd", "R-Fwd", "R-Out"]
-SENSOR_COLORS = ["tab:green", "tab:blue", "tab:orange", "tab:red"]
-MAX_LIDAR_M   = 8.0    # max LiDAR range
+
+SENSOR_CFGS = {
+    4: {
+        "deg":    [45.0, 0.0, 0.0, -45.0],
+        "lat":    [0.09, 0.04, -0.04, -0.09],
+        "names":  ["L-Out", "L-Fwd", "R-Fwd", "R-Out"],
+        "colors": ["tab:green", "tab:blue", "tab:orange", "tab:red"],
+        "max_m":  8.0,
+        # Role indices for steering logic
+        "idx_left": 0, "idx_front_left": 1,
+        "idx_front_right": 2, "idx_right": 3,
+        "has_hard_sides": False,
+        # Default thresholds
+        "fod": 600, "sod": 1000, "acd": 800, "cfd": 201,
+    },
+    6: {
+        "deg":    [90.0, 45.0, 0.0, 0.0, -45.0, -90.0],
+        "lat":    [0.12, 0.09, 0.04, -0.04, -0.09, -0.12],
+        "names":  ["H-Left", "L-Out", "L-Fwd", "R-Fwd", "R-Out", "H-Right"],
+        "colors": ["tab:purple", "tab:green", "tab:blue",
+                    "tab:orange", "tab:red", "tab:pink"],
+        "max_m":  2.0,
+        "idx_left": 1, "idx_front_left": 2,
+        "idx_front_right": 3, "idx_right": 4,
+        "idx_hard_left": 0, "idx_hard_right": 5,
+        "has_hard_sides": True,
+        "fod": 800, "sod": 600, "acd": 400, "cfd": 150,
+    },
+}
+
+# Active config (set by CLI --sensors)
+_num_sensors = 4
+
+def _cfg():
+    return SENSOR_CFGS[_num_sensors]
 
 # ─── Track builder ────────────────────────────────────────────────────────────
 CORRIDOR_W = 1.05   # corridor width (m), mid of 0.95–1.15 regulation range
 
 def _arc_segments(cx, cy, r, a_start, a_end, n=12):
-    """Generate line segments approximating an arc (angles in radians)."""
     segs = []
     angles = np.linspace(a_start, a_end, n + 1)
     for i in range(n):
@@ -72,20 +103,12 @@ def _arc_segments(cx, cy, r, a_start, a_end, n=12):
     return segs
 
 def _rounded_rect(cx, cy, half_w, half_h, r, n_arc=10):
-    """Rectangle with rounded corners, returned as list of (x1,y1,x2,y2) segments."""
     segs = []
-    # Clamp radius
     r = min(r, half_w, half_h)
-    # Straight edges (between corners)
-    # bottom: left→right
     segs.append((cx - half_w + r, cy - half_h,     cx + half_w - r, cy - half_h))
-    # right:  bottom→top
     segs.append((cx + half_w,     cy - half_h + r,  cx + half_w,     cy + half_h - r))
-    # top:    right→left
     segs.append((cx + half_w - r, cy + half_h,     cx - half_w + r, cy + half_h))
-    # left:   top→bottom
     segs.append((cx - half_w,     cy + half_h - r,  cx - half_w,     cy - half_h + r))
-    # Corner arcs (bottom-right, top-right, top-left, bottom-left)
     segs += _arc_segments(cx + half_w - r, cy - half_h + r, r, -np.pi/2, 0,       n_arc)
     segs += _arc_segments(cx + half_w - r, cy + half_h - r, r, 0,        np.pi/2,  n_arc)
     segs += _arc_segments(cx - half_w + r, cy + half_h - r, r, np.pi/2,  np.pi,    n_arc)
@@ -93,64 +116,38 @@ def _rounded_rect(cx, cy, half_w, half_h, r, n_arc=10):
     return segs
 
 def build_track():
-    """
-    Complex track with rounded corners, chicane, and narrowing section.
-
-    Layout (~8 × 5 m):
-      - Main oval loop with rounded corners (r=0.8m outer, r-corridor inner)
-      - Chicane barrier in top straight
-      - Narrowing on right side
-
-    Car starts in bottom straight, heading east.
-    """
     W = CORRIDOR_W
-    # ── Main oval ────────────────────────────────────────────────────────────
-    # Outer boundary: 8 × 5 m, corner radius 0.9
     out_hw, out_hh, out_r = 4.0, 2.5, 0.9
     cx, cy = 4.0, 2.5
     outer = _rounded_rect(cx, cy, out_hw, out_hh, out_r)
-
-    # Inner boundary: shrunk by corridor width
     in_hw  = out_hw - W
     in_hh  = out_hh - W
     in_r   = max(0.1, out_r - W)
     inner  = _rounded_rect(cx, cy, in_hw, in_hh, in_r)
-
     walls = outer + inner
 
-    # ── Chicane in top straight ──────────────────────────────────────────────
-    # Two small barriers staggered, forcing S-turn
-    chic_y_out = cy + out_hh           # top outer wall y = 5.0
-    chic_y_in  = cy + out_hh - W       # top inner wall y = 3.95
+    chic_y_out = cy + out_hh
+    chic_y_in  = cy + out_hh - W
     chic_mid   = (chic_y_out + chic_y_in) / 2
 
-    # Barrier 1: sticks out from outer wall toward centre
     b1x = cx - 0.8
     walls.append((b1x, chic_y_out, b1x, chic_mid + 0.05))
     walls.append((b1x - 0.15, chic_mid + 0.05, b1x + 0.15, chic_mid + 0.05))
 
-    # Barrier 2: sticks out from inner wall toward outer
     b2x = cx + 0.8
     walls.append((b2x, chic_y_in, b2x, chic_mid - 0.05))
     walls.append((b2x - 0.15, chic_mid - 0.05, b2x + 0.15, chic_mid - 0.05))
 
-    # ── Narrowing on right side ──────────────────────────────────────────────
-    # Bump inner wall outward on right straight, narrowing corridor to ~0.7 m
-    narrow_x = cx + out_hw - W   # inner wall right side x ≈ 6.95
+    narrow_x = cx + out_hw - W
     bump = 0.30
     walls.append((narrow_x + bump, cy - 0.6, narrow_x + bump, cy + 0.6))
-    # Close off the bump top and bottom
     walls.append((narrow_x, cy - 0.6,  narrow_x + bump, cy - 0.6))
     walls.append((narrow_x, cy + 0.6,  narrow_x + bump, cy + 0.6))
-    # Remove the inner wall segment behind the bump by covering it
-    # (the bump creates a parallel wall closer to outer)
 
-    # Start position: bottom straight, heading east
     return walls, 2.5, 0.35, 0.0
 
 # ─── Sensor raycast ───────────────────────────────────────────────────────────
 def _ray_seg(ox, oy, dx, dy, x1, y1, x2, y2):
-    """Return t of first ray–wall intersection, or None."""
     wx = x2 - x1;  wy = y2 - y1
     den = dx * wy - dy * wx
     if abs(den) < 1e-10:
@@ -162,46 +159,63 @@ def _ray_seg(ox, oy, dx, dy, x1, y1, x2, y2):
     return None
 
 def sense(x, y, h, walls):
-    """Return [s0..s3] in cm×10 (9999 if beyond range)."""
+    """Return sensor readings in cm*10 (9999 if beyond range)."""
+    cfg = _cfg()
     readings = []
-    ch, sh = np.cos(h), np.sin(h)  # heading unit vector
-    perp = h + np.pi / 2           # unit vector pointing left of heading
+    ch, sh = np.cos(h), np.sin(h)
+    perp = h + np.pi / 2
     cp, sp = np.cos(perp), np.sin(perp)
-    for deg, lat in zip(SENSOR_DEG, SENSOR_LAT_M):
-        ox = x + SENSOR_FWD_M * ch + lat * cp   # forward + lateral offset
+    max_m = cfg["max_m"]
+    for deg, lat in zip(cfg["deg"], cfg["lat"]):
+        ox = x + SENSOR_FWD_M * ch + lat * cp
         oy = y + SENSOR_FWD_M * sh + lat * sp
         ang = h + np.radians(deg)
         dx, dy = np.cos(ang), np.sin(ang)
-        t_min = MAX_LIDAR_M
+        t_min = max_m
         for seg in walls:
             r = _ray_seg(ox, oy, dx, dy, *seg)
             if r is not None and r < t_min:
                 t_min = r
-        readings.append(min(int(t_min * 1000.0), 9999))   # m → cm×10
+        readings.append(min(int(t_min * 1000.0), 9999))
     return readings
 
 # ─── Control algorithm (direct port of work() in Umbreon_roborace.ino) ───────
 def work(state, s):
     """
     state : mutable dict — 'stuck_time', 'turns', 'v' (current speed m/s)
-    s     : sensor list [s0..s3] in cm×10
+    s     : sensor list in cm*10
     Returns (steer_cmd, target_speed_ms)
     """
-    f_l = s[1] < FRONT_OBSTACLE_DIST
-    f_r = s[2] < FRONT_OBSTACLE_DIST
+    cfg = _cfg()
+    il = cfg["idx_left"]
+    ifl = cfg["idx_front_left"]
+    ifr = cfg["idx_front_right"]
+    ir = cfg["idx_right"]
+    fod = cfg["fod"]
+    sod = cfg["sod"]
+    acd = cfg["acd"]
+    cfd = cfg["cfd"]
+
+    f_l = s[ifl] < fod
+    f_r = s[ifr] < fod
 
     # ── Steering diff ─────────────────────────────────────────────────────────
-    if s[0] > SIDE_OPEN_DIST and s[3] > SIDE_OPEN_DIST:
-        diff = 800                 # open corridor — bias toward right wall
+    if s[il] > sod and s[ir] > sod:
+        diff = 800
     else:
-        diff = s[3] - s[0]         # balance between walls
+        diff = s[ir] - s[il]
 
-    if all(x < ALL_CLOSE_DIST for x in s):
-        diff = 800                 # boxed in — hard right
+    if all(x < acd for x in s):
+        diff = 800
 
-    # Diagonal correction (mirrors Umbreon_roborace.ino fix):
-    # blends FR-FL into steering to smooth corner transitions.
-    diff += (s[2] - s[1]) // 3
+    # Diagonal correction
+    diff += (s[ifr] - s[ifl]) // 3
+
+    # Hard-side influence
+    if cfg["has_hard_sides"]:
+        ihl = cfg["idx_hard_left"]
+        ihr = cfg["idx_hard_right"]
+        diff += int((s[ihr] - s[ihl]) * 0.25)
 
     # ── Speed ─────────────────────────────────────────────────────────────────
     how_clear = int(f_l) + int(f_r)
@@ -213,8 +227,8 @@ def work(state, s):
     steer = int(np.clip(diff * coef, -1000, 1000))
 
     # ── Stuck detection ───────────────────────────────────────────────────────
-    c_fl = s[1] < CLOSE_FRONT_DIST
-    c_fr = s[2] < CLOSE_FRONT_DIST
+    c_fl = s[ifl] < cfd
+    c_fr = s[ifr] < cfd
     if c_fl or c_fr or state['v'] < 0.1:
         state['stuck_time'] += 1
     else:
@@ -222,7 +236,7 @@ def work(state, s):
 
     if state['stuck_time'] > 25:
         steer = 0
-        spd   = -0.5           # simplified reverse (no go_back() in sim)
+        spd   = -0.5
         state['stuck_time'] = 0
 
     # ── U-turn detection ──────────────────────────────────────────────────────
@@ -237,14 +251,12 @@ def work(state, s):
     return steer, spd
 
 # ─── Physics step ─────────────────────────────────────────────────────────────
-DT         = 0.005                              # physics timestep (s)
-CTRL_STEPS = max(1, int((LOOP_MS / 1000.0) / DT))   # physics steps per tick
+DT         = 0.005
+CTRL_STEPS = max(1, int((LOOP_MS / 1000.0) / DT))
 
 def step_physics(x, y, h, v, steer_cmd, target_v, dt=DT):
-    """One physics sub-step. Returns (x, y, h, v)."""
-    # steer_cmd > 0 → right turn (matches write_steer() inversion)
     norm  = np.clip(steer_cmd / 1000.0, -1.0, 1.0)
-    angle = -norm * MAX_STR_RAD          # negative so positive cmd = right
+    angle = -norm * MAX_STR_RAD
     if abs(v) > 0.01 and abs(angle) > 1e-4:
         omega = v / (WHEELBASE / np.tan(angle))
     else:
@@ -280,12 +292,12 @@ def simulate(walls, x0, y0, h0, n_ticks=1500):
     return xs, ys, vs_log, steers_log, sens_log
 
 def run_fast(walls, x0, y0, h0, n_ticks):
+    cfg = _cfg()
     xs, ys, vs_log, steers_log, sens_log = simulate(walls, x0, y0, h0, n_ticks)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Umbreon Roborace — Pre-computed run", fontsize=13)
+    fig.suptitle(f"Umbreon Roborace — Pre-computed run ({_num_sensors} sensors)", fontsize=13)
 
-    # ── Left: track + colour-coded path ──────────────────────────────────────
     ax = axes[0]
     ax.set_aspect('equal')
     ax.set_title("Path  (colour = speed)")
@@ -297,18 +309,18 @@ def run_fast(walls, x0, y0, h0, n_ticks):
     ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
     ax.legend(fontsize=9)
 
-    # ── Right: speed + steering + sensor distances over time ─────────────────
     ax2 = axes[1]
     t = np.arange(len(vs_log)) * (LOOP_MS / 1000.0)
     ax2.plot(t, vs_log,  label='speed (m/s)', lw=1.5)
     ax2.plot(t[:len(steers_log)],
              [s / 1000.0 for s in steers_log],
              label='steer (norm)', lw=1, alpha=0.7)
-    for i, (name, col) in enumerate(zip(SENSOR_NAMES, SENSOR_COLORS)):
-        d = [r[i] / 10.0 for r in sens_log]   # cm
+    for i, (name, col) in enumerate(zip(cfg["names"], cfg["colors"])):
+        d = [r[i] / 10.0 for r in sens_log]
         ax2.plot(t[:len(d)], d, label=f"{name} (cm)", lw=0.8, alpha=0.5, color=col)
-    ax2.axhline(FRONT_OBSTACLE_DIST / 10, color='gray', ls='--', lw=0.8,
-                label=f'FRONT_OBSTACLE ({FRONT_OBSTACLE_DIST//10} cm)')
+    fod = cfg["fod"]
+    ax2.axhline(fod / 10, color='gray', ls='--', lw=0.8,
+                label=f'FRONT_OBSTACLE ({fod//10} cm)')
     ax2.set_xlabel("time (s)"); ax2.set_title("Signals over time")
     ax2.legend(fontsize=7, ncol=2); ax2.grid(True, alpha=0.3)
 
@@ -317,27 +329,28 @@ def run_fast(walls, x0, y0, h0, n_ticks):
 
 # ─── Live animation mode ──────────────────────────────────────────────────────
 def run_live(walls, x0, y0, h0):
+    cfg = _cfg()
+    ns = _num_sensors
     sim = dict(x=x0, y=y0, h=h0, v=0.0,
                steer=0, target_v=0.0,
                ctrl={'stuck_time': 0, 'turns': 0.0, 'v': 0.0},
                trail_x=[x0], trail_y=[y0],
-               sensors=[9999]*4)
+               sensors=[9999]*ns)
 
     fig, ax = plt.subplots(figsize=(11, 7))
     ax.set_aspect('equal')
     ax.set_xlim(-0.5, 8.5); ax.set_ylim(-0.5, 5.5)
-    ax.set_title("Umbreon Roborace — Live simulation  (close window to stop)")
+    ax.set_title(f"Umbreon Roborace — Live simulation ({ns} sensors)")
     ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
 
-    # Static walls
     for seg in walls:
         ax.plot([seg[0], seg[2]], [seg[1], seg[3]], 'k-', lw=2.5)
 
     trail_line, = ax.plot([], [], 'b-', lw=1, alpha=0.35, label='path')
     ray_lines   = [ax.plot([], [], '-', color=c, alpha=0.75, lw=1.5,
                             label=n)[0]
-                   for c, n in zip(SENSOR_COLORS, SENSOR_NAMES)]
-    car_patches = [None, None]   # [body_rect, heading_arrow]
+                   for c, n in zip(cfg["colors"], cfg["names"])]
+    car_patches = [None, None]
     info_box    = ax.text(0.015, 0.97, '', transform=ax.transAxes,
                           va='top', fontsize=8, fontfamily='monospace',
                           bbox=dict(facecolor='white', alpha=0.7, pad=3))
@@ -348,11 +361,9 @@ def run_live(walls, x0, y0, h0):
         for p in car_patches:
             if p is not None:
                 p.remove()
-        # Car body rectangle (rear-axle is reference point)
         h = sim['h']
         cx = sim['x'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.cos(h)
         cy = sim['y'] + (WHEELBASE / 2 + FRONT_OH - REAR_OH) / 2 * np.sin(h)
-        angle_deg = np.degrees(h)
         rect = mpatches.FancyBboxPatch(
             (-CAR_LENGTH / 2, -TRACK_WIDTH / 2), CAR_LENGTH, TRACK_WIDTH,
             boxstyle="round,pad=0.005",
@@ -361,7 +372,6 @@ def run_live(walls, x0, y0, h0):
         rect.set_transform(t)
         ax.add_patch(rect)
         car_patches[0] = rect
-        # Heading arrow (small, at front)
         fx = sim['x'] + (WHEELBASE + FRONT_OH) * np.cos(h)
         fy = sim['y'] + (WHEELBASE + FRONT_OH) * np.sin(h)
         arr = mpatches.FancyArrow(
@@ -372,7 +382,6 @@ def run_live(walls, x0, y0, h0):
         car_patches[1] = arr
 
     def frame(_):
-        # One control tick ───────────────────────────────────────────────────
         s = sense(sim['x'], sim['y'], sim['h'], walls)
         sim['sensors']      = s
         sim['ctrl']['v']    = sim['v']
@@ -387,25 +396,25 @@ def run_live(walls, x0, y0, h0):
         sim['trail_x'].append(sim['x'])
         sim['trail_y'].append(sim['y'])
 
-        # Graphics ────────────────────────────────────────────────────────────
         trail_line.set_data(sim['trail_x'][-800:], sim['trail_y'][-800:])
         _redraw_car()
 
         ch, sh = np.cos(sim['h']), np.sin(sim['h'])
         perp = sim['h'] + np.pi / 2
         cp, sp = np.cos(perp), np.sin(perp)
-        for i, (deg, lat, rl) in enumerate(zip(SENSOR_DEG, SENSOR_LAT_M, ray_lines)):
+        for i, (deg, lat, rl) in enumerate(zip(cfg["deg"], cfg["lat"], ray_lines)):
             ox = sim['x'] + SENSOR_FWD_M * ch + lat * cp
             oy = sim['y'] + SENSOR_FWD_M * sh + lat * sp
             ang = sim['h'] + np.radians(deg)
-            d   = min(s[i] / 1000.0, MAX_LIDAR_M)
+            d   = min(s[i] / 1000.0, cfg["max_m"])
             rl.set_data([ox, ox + d * np.cos(ang)],
                         [oy, oy + d * np.sin(ang)])
 
+        # Build sensor info string dynamically
+        sinfo = "  ".join(f"{cfg['names'][i][:2]}={s[i]/10:.0f}cm" for i in range(ns))
         info_box.set_text(
             f"v = {sim['v']:.2f} m/s    steer = {sim['steer']:+5d}\n"
-            f"Lo={s[0]/10:5.0f}cm  Lf={s[1]/10:5.0f}cm  "
-            f"Rf={s[2]/10:5.0f}cm  Ro={s[3]/10:5.0f}cm\n"
+            f"{sinfo}\n"
             f"stuck = {sim['ctrl']['stuck_time']:2d}    "
             f"turns = {sim['ctrl']['turns']:+6.1f}")
 
@@ -422,8 +431,6 @@ import threading
 import time
 
 class TelemetryBridge:
-    """TCP server that mimics the Wemos D1 Mini WiFi bridge for dashboard testing."""
-
     def __init__(self, port=8023):
         self.port = port
         self.clients = []
@@ -435,15 +442,17 @@ class TelemetryBridge:
         self._manual_steer = 0
         self._manual_speed = 0.0
         self._manual_last = 0.0
+        cfg = _cfg()
         self._cfg = dict(
-            FOD=FRONT_OBSTACLE_DIST, SOD=SIDE_OPEN_DIST,
-            ACD=ALL_CLOSE_DIST, CFD=CLOSE_FRONT_DIST,
+            FOD=cfg["fod"], SOD=cfg["sod"],
+            ACD=cfg["acd"], CFD=cfg["cfd"],
             KP=4.18, KI=2.93, KD=0.43,
             MSP=96, XSP=110, BSP=85,
             MNP=40, XNP=140, NTP=90,
             ENH=62, WDM=0.060, LMS=LOOP_MS,
             SPD1=2.7, SPD2=0.8, COE1=0.3, COE2=0.7,
             WDD=120.0, RCW=1, STK=25, IMU=1, DBG=1,
+            SNS=_num_sensors, SMX=int(cfg["max_m"] * 1000),
         )
 
     def start(self):
@@ -458,14 +467,18 @@ class TelemetryBridge:
         print(f"  Dashboard: connect to localhost:{self.port}")
 
     def _accept_loop(self):
+        ns = _num_sensors
         while True:
             try:
                 conn, addr = self._server.accept()
                 conn.setblocking(False)
                 with self.lock:
                     self.clients.append(conn)
+                # Send dynamic header
+                hdr = "#ms," + ",".join(f"s{i}" for i in range(ns))
+                hdr += ",steer,speed,target,yaw,heading\n"
                 try:
-                    conn.sendall(b"#ms,s0,s1,s2,s3,steer,speed,target,yaw,heading\n")
+                    conn.sendall(hdr.encode())
                 except OSError:
                     pass
                 print(f"  Dashboard client connected: {addr}")
@@ -475,7 +488,8 @@ class TelemetryBridge:
                 break
 
     def send_telemetry(self, ms, s, steer, speed, target, yaw=0.0, heading=0.0):
-        line = (f"{ms},{s[0]},{s[1]},{s[2]},{s[3]},"
+        sensor_csv = ",".join(str(v) for v in s)
+        line = (f"{ms},{sensor_csv},"
                 f"{steer},{speed:.2f},{target:.1f},"
                 f"{yaw:.1f},{heading:.1f}\n")
         data = line.encode('ascii')
@@ -486,7 +500,6 @@ class TelemetryBridge:
                     c.sendall(data)
                 except OSError:
                     dead.append(c)
-                # Check for incoming commands
                 try:
                     cmd_data = c.recv(256)
                     if cmd_data:
@@ -553,12 +566,10 @@ class TelemetryBridge:
 
 
 def _bridge_step(sim, walls, bridge=None):
-    """One simulation tick for bridge mode. Returns (s, steer, tgt_v)."""
     s = sense(sim['x'], sim['y'], sim['h'], walls)
     sim['sensors']   = s
     sim['ctrl']['v'] = sim['v']
 
-    # Manual drive mode ($DRV) — bypass autonomous control
     if (bridge and bridge._manual_mode
             and time.time() - bridge._manual_last < 0.5):
         steer = bridge._manual_steer
@@ -571,7 +582,6 @@ def _bridge_step(sim, walls, bridge=None):
     sim['steer']     = steer
     sim['target_v']  = tgt_v
 
-    # Simulated IMU
     dt = LOOP_MS / 1000.0
     norm = np.clip(steer / 1000.0, -1, 1)
     sa = -norm * MAX_STR_RAD
@@ -597,16 +607,12 @@ def _make_bridge_sim(x0, y0, h0):
                 steer=0, target_v=0.0,
                 ctrl={'stuck_time': 0, 'turns': 0.0, 'v': 0.0},
                 trail_x=[x0], trail_y=[y0],
-                sensors=[9999]*4,
+                sensors=[9999]*_num_sensors,
                 heading=0.0, yaw_rate=0.0,
                 tick=0)
 
 
 def run_bridge(walls, x0, y0, h0, headless=False):
-    """Run simulation with TCP bridge for dashboard.
-    headless=True: no matplotlib, runs indefinitely (Ctrl+C to stop).
-    headless=False: matplotlib animation + bridge.
-    """
     bridge = TelemetryBridge()
     bridge.start()
     sim = _make_bridge_sim(x0, y0, h0)
@@ -621,7 +627,6 @@ def run_bridge(walls, x0, y0, h0, headless=False):
         print("  Waiting for $START command...")
         try:
             while True:
-                # Check pending start countdown
                 if bridge._start_at > 0 and time.time() >= bridge._start_at:
                     bridge._running = True
                     bridge._start_at = 0
@@ -651,10 +656,12 @@ def run_bridge(walls, x0, y0, h0, headless=False):
         return
 
     # ── GUI mode ─────────────────────────────────────────────────────────
+    cfg = _cfg()
+    ns = _num_sensors
     fig, ax = plt.subplots(figsize=(11, 7))
     ax.set_aspect('equal')
     ax.set_xlim(-0.5, 8.5); ax.set_ylim(-0.5, 5.5)
-    ax.set_title("Umbreon Roborace -- Bridge mode  (dashboard on port 8023)")
+    ax.set_title(f"Umbreon Roborace -- Bridge mode ({ns} sensors, port 8023)")
     ax.set_xlabel("x (m)"); ax.set_ylabel("y (m)")
 
     for seg in walls:
@@ -663,7 +670,7 @@ def run_bridge(walls, x0, y0, h0, headless=False):
     trail_line, = ax.plot([], [], 'b-', lw=1, alpha=0.35, label='path')
     ray_lines   = [ax.plot([], [], '-', color=c, alpha=0.75, lw=1.5,
                             label=n)[0]
-                   for c, n in zip(SENSOR_COLORS, SENSOR_NAMES)]
+                   for c, n in zip(cfg["colors"], cfg["names"])]
     car_patches = [None, None]
     info_box    = ax.text(0.015, 0.97, '', transform=ax.transAxes,
                           va='top', fontsize=8, fontfamily='monospace',
@@ -695,7 +702,6 @@ def run_bridge(walls, x0, y0, h0, headless=False):
         car_patches[1] = arr
 
     def frame(_):
-        # Check pending start countdown
         if bridge._start_at > 0 and time.time() >= bridge._start_at:
             bridge._running = True
             bridge._start_at = 0
@@ -724,18 +730,18 @@ def run_bridge(walls, x0, y0, h0, headless=False):
         ch, sh = np.cos(sim['h']), np.sin(sim['h'])
         perp = sim['h'] + np.pi / 2
         cp, sp = np.cos(perp), np.sin(perp)
-        for i, (deg, lat, rl) in enumerate(zip(SENSOR_DEG, SENSOR_LAT_M, ray_lines)):
+        for i, (deg, lat, rl) in enumerate(zip(cfg["deg"], cfg["lat"], ray_lines)):
             ox = sim['x'] + SENSOR_FWD_M * ch + lat * cp
             oy = sim['y'] + SENSOR_FWD_M * sh + lat * sp
             ang = sim['h'] + np.radians(deg)
-            d   = min(s[i] / 1000.0, MAX_LIDAR_M)
+            d   = min(s[i] / 1000.0, cfg["max_m"])
             rl.set_data([ox, ox + d * np.cos(ang)],
                         [oy, oy + d * np.sin(ang)])
 
+        sinfo = "  ".join(f"{cfg['names'][i][:2]}={s[i]/10:.0f}cm" for i in range(ns))
         info_box.set_text(
             f"v = {sim['v']:.2f} m/s    steer = {sim['steer']:+5d}\n"
-            f"Lo={s[0]/10:5.0f}cm  Lf={s[1]/10:5.0f}cm  "
-            f"Rf={s[2]/10:5.0f}cm  Ro={s[3]/10:5.0f}cm\n"
+            f"{sinfo}\n"
             f"stuck = {sim['ctrl']['stuck_time']:2d}    "
             f"turns = {sim['ctrl']['turns']:+6.1f}    "
             f"yaw = {sim['yaw_rate']:+6.1f}")
@@ -759,7 +765,11 @@ if __name__ == "__main__":
                         help="With --bridge: no matplotlib window, runs indefinitely")
     parser.add_argument("--ticks",    type=int, default=1500,
                         help="Control ticks for --fast mode (default 1500 = 60 s)")
+    parser.add_argument("--sensors",  type=int, default=4, choices=[4, 6],
+                        help="Sensor count: 4 (TF-Luna) or 6 (VL53L0X)")
     args = parser.parse_args()
+
+    _num_sensors = args.sensors
 
     walls, x0, y0, h0 = build_track()
 

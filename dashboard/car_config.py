@@ -6,15 +6,38 @@ Default parameter values mirror the compile-time #defines in luna_car.h
 and Umbreon_roborace.ino.
 """
 
-# ─── Sensor geometry (from sim.py lines 54-59) ──────────────────────────────
+# ─── Sensor geometry configurations ─────────────────────────────────────────
+SENSOR_CONFIGS = {
+    4: {
+        "name": "4x TF-Luna",
+        "angles_deg": [45.0, 0.0, 0.0, -45.0],
+        "lateral_m": [0.09, 0.04, -0.04, -0.09],
+        "names": ["L-Out", "L-Fwd", "R-Fwd", "R-Out"],
+        "colors": ["tab:green", "tab:blue", "tab:orange", "tab:red"],
+        "max_range_m": 8.0,
+    },
+    6: {
+        "name": "6x VL53L0X",
+        "angles_deg": [90.0, 45.0, 0.0, 0.0, -45.0, -90.0],
+        "lateral_m": [0.12, 0.09, 0.04, -0.04, -0.09, -0.12],
+        "names": ["H-Left", "L-Out", "L-Fwd", "R-Fwd", "R-Out", "H-Right"],
+        "colors": [
+            "tab:purple", "tab:green", "tab:blue",
+            "tab:orange", "tab:red", "tab:pink",
+        ],
+        "max_range_m": 2.0,
+    },
+}
+
+# ─── Backward-compatible aliases (default to 4-sensor config) ────────────────
 WHEELBASE = 0.173          # m
 SENSOR_FWD = 0.253         # m ahead of rear axle (WHEELBASE + 0.080)
 MAX_STEER_RAD = 28.0       # degrees (physical max steering angle)
-SENSOR_DEG = [45.0, 0.0, 0.0, -45.0]         # relative to car heading
-SENSOR_LAT = [0.09, 0.04, -0.04, -0.09]      # lateral offset (+ = left)
-SENSOR_NAMES = ["L-Out", "L-Fwd", "R-Fwd", "R-Out"]
-SENSOR_COLORS = ["tab:green", "tab:blue", "tab:orange", "tab:red"]
-MAX_LIDAR_M = 8.0          # max LiDAR range in metres
+SENSOR_DEG = SENSOR_CONFIGS[4]["angles_deg"]
+SENSOR_LAT = SENSOR_CONFIGS[4]["lateral_m"]
+SENSOR_NAMES = SENSOR_CONFIGS[4]["names"]
+SENSOR_COLORS = SENSOR_CONFIGS[4]["colors"]
+MAX_LIDAR_M = SENSOR_CONFIGS[4]["max_range_m"]
 
 # ─── Kinematic parameters ────────────────────────────────────────────────────
 CAR_LENGTH = 0.290          # m (total body)
@@ -54,6 +77,8 @@ DEFAULTS = {
     "BLV":   6.0,     # Battery low voltage cutoff (V)
     "IMU":     1,     # USE_IMU (read-only)
     "DBG":     1,     # USE_WIFI_DEBUG (read-only)
+    "SNS":     4,     # Sensor count (read-only)
+    "SMX":  8000,     # Max sensor range cm×10 (read-only)
 }
 
 # ─── Key abbreviation ↔ full name mapping ────────────────────────────────────
@@ -89,10 +114,12 @@ KEY_NAMES = {
     "BLV":  "Battery Low (V)",
     "IMU":  "IMU Enabled (r/o)",
     "DBG":  "WiFi Debug (r/o)",
+    "SNS":  "Sensor Count (r/o)",
+    "SMX":  "Max Range (r/o)",
 }
 
 # Keys that are read-only (compile-time flags)
-READONLY_KEYS = {"IMU", "DBG"}
+READONLY_KEYS = {"IMU", "DBG", "SNS", "SMX"}
 
 # ─── Parameter grouping for UI ───────────────────────────────────────────────
 PARAM_GROUPS = {
@@ -104,7 +131,7 @@ PARAM_GROUPS = {
     "Control Loop":       ["LMS", "SPD1", "SPD2", "COE1", "COE2"],
     "Navigation":         ["WDD", "RCW", "STK"],
     "Hardware":           ["IMR", "SVR", "CAL", "BEN", "BML", "BLV"],
-    "Flags (read-only)":  ["IMU", "DBG"],
+    "Flags (read-only)":  ["IMU", "DBG", "SNS", "SMX"],
 }
 
 # ─── Float keys (need float parsing/display, rest are int) ───────────────────

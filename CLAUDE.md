@@ -52,8 +52,8 @@ No automated test suite — diagnostics are in `tests.h` (8 WiFi-accessible hard
 
 ```
 Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:23 ──▶ Python Dashboard / ROS2
-   (C++)            GP17 TX → RX    (ESP8266)           ├─ HTTP:80 ─▶ Built-in Web UI (phone)
-                    GP16 RX ← TX                        └─ WS:81 ──▶ Built-in Web UI (real-time)
+   (C++)            GP16 TX → RX    (ESP8266)           ├─ HTTP:80 ─▶ Built-in Web UI (phone)
+                    GP17 RX ← TX                        └─ WS:81 ──▶ Built-in Web UI (real-time)
 ```
 
 ### Firmware (`Umbreon_roborace.ino` + `luna_car.h`)

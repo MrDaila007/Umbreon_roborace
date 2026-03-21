@@ -33,8 +33,8 @@
 #define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
 
 #if USE_WIFI_DEBUG
-#define DEBUG_TX_PIN  16         // GP16 = UART0 TX → D1 Mini RX
-#define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
+#define DEBUG_TX_PIN  16         // GP16 = UART1 TX → D1 Mini RX
+#define DEBUG_RX_PIN  17         // GP17 = UART1 RX ← D1 Mini TX
 #endif
 
 // ─── All includes first (Arduino inserts prototypes after the last #include) ─

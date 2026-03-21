@@ -368,8 +368,8 @@ Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **p
 
 | D1 Mini | Pico 2 |
 |---|---|
-| RX | GP6 (UART1 TX) |
-| TX | GP7 (UART1 RX) |
+| RX | GP16 (UART1 TX) |
+| TX | GP17 (UART1 RX) |
 | 3V3 | 3.3 V (or power via USB) |
 | GND | GND |
 

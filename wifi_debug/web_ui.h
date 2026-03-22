@@ -238,7 +238,7 @@ var ws,fc=0,di=null,lc='';
 var sn=4; // detected sensor count (4 or 6)
 // Sensor geometry configs: [angles_deg, lat_offsets, colors]
 var SN4={SD:[45,0,0,-45],SL:[.09,.04,-.04,-.09],SC:['#2ca02c','#1f77b4','#ff7f0e','#d62728'],LB:['Left','Front-Left','Front-Right','Right']};
-var SN6={SD:[90,45,0,0,-45,-90],SL:[.12,.09,.04,-.04,-.09,-.12],SC:['#9467bd','#2ca02c','#1f77b4','#ff7f0e','#d62728','#e377c2'],LB:['Hard-Left','Left','Front-Left','Front-Right','Right','Hard-Right']};
+var SN6={SD:[-90,0,-45,45,0,90],SL:[-.12,-.04,-.09,.09,.04,.12],SC:['#e377c2','#ff7f0e','#d62728','#2ca02c','#1f77b4','#9467bd'],LB:['Hard-Right','Front-Right','Right','Left','Front-Left','Hard-Left']};
 function SC(){return sn>=6?SN6:SN4}
 function Q(id){return document.getElementById(id)}
 

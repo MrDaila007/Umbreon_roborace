@@ -18,12 +18,12 @@ SENSOR_CONFIGS = {
     },
     6: {
         "name": "6x VL53L0X",
-        "angles_deg": [90.0, 45.0, 0.0, 0.0, -45.0, -90.0],
-        "lateral_m": [0.12, 0.09, 0.04, -0.04, -0.09, -0.12],
-        "names": ["H-Left", "L-Out", "L-Fwd", "R-Fwd", "R-Out", "H-Right"],
+        "angles_deg": [-90.0, 0.0, -45.0, 45.0, 0.0, 90.0],
+        "lateral_m": [-0.12, -0.04, -0.09, 0.09, 0.04, 0.12],
+        "names": ["H-Right", "R-Fwd", "R-Out", "L-Out", "L-Fwd", "H-Left"],
         "colors": [
-            "tab:purple", "tab:green", "tab:blue",
-            "tab:orange", "tab:red", "tab:pink",
+            "tab:pink", "tab:orange", "tab:red",
+            "tab:green", "tab:blue", "tab:purple",
         ],
         "max_range_m": 2.0,
     },

@@ -31,6 +31,7 @@
 #define SENSOR_CONFIG   SENSOR_6X_VL53L0X   // SENSOR_4X_LUNA or SENSOR_6X_VL53L0X
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
 #define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
+#define USE_OLED_MENU   1       // 1 = enable SSD1306 OLED + rotary encoder menu, 0 = disable
 
 #if USE_WIFI_DEBUG
 #define DEBUG_TX_PIN  16         // GP16 = UART1 TX → D1 Mini RX
@@ -115,6 +116,7 @@ float manual_speed = 0.0f;
 Car car;
 
 #include "tests.h"              // hardware tests — needs cfg_* globals and Car defined above
+#include "menu.h"               // OLED menu — needs cfg_* globals, Car, test functions
 
 // ─── Telemetry helper ────────────────────────────────────────────────────────
 // Print sensor values as CSV (loops over SENSOR_COUNT)
@@ -395,7 +397,7 @@ static bool wifi_check_abort() {
     return false;
 }
 
-static void wifi_test_lidar() {
+void wifi_test_lidar() {
     unsigned long start = millis();
     while ((millis() - start) < 5000) {
         if (wifi_check_abort()) break;
@@ -418,7 +420,7 @@ static void wifi_test_lidar() {
     Serial1.println("$TDONE:lidar");
 }
 
-static void wifi_test_servo() {
+void wifi_test_servo() {
     Serial1.println("$T:SERVO,phase=left");
     car.write_steer(-1000); delay(800);
     if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
@@ -445,7 +447,7 @@ static void wifi_test_servo() {
     Serial1.println("$TDONE:servo");
 }
 
-static void wifi_test_taho() {
+void wifi_test_taho() {
     noInterrupts();
     _taho_count = 0;
     _taho_last  = micros();
@@ -475,7 +477,7 @@ static void wifi_test_taho() {
     Serial1.println("$TDONE:taho");
 }
 
-static void wifi_test_esc() {
+void wifi_test_esc() {
     Serial1.println("$T:ESC,phase=arm");
     car.write_speed(0);
     delay(2000);
@@ -522,7 +524,7 @@ static void wifi_test_esc() {
     Serial1.println("$TDONE:esc");
 }
 
-static void wifi_test_speed() {
+void wifi_test_speed() {
     float target = 1.5f;
 
     Serial1.println("$T:SPEED,phase=arm");
@@ -567,7 +569,7 @@ static void wifi_test_speed() {
     Serial1.println("$TDONE:speed");
 }
 
-static void wifi_test_autotune() {
+void wifi_test_autotune() {
     const float TARGET     = 1.5f;
     const int   RELAY_D    = 20;
     const float HYST       = 0.10f;
@@ -719,7 +721,7 @@ static void wifi_test_autotune() {
     Serial1.println("$TDONE:autotune");
 }
 
-static void wifi_test_reactive() {
+void wifi_test_reactive() {
     const int CLOSE_DIST = cfg_front_obstacle_dist;
     const int FAR_DIST   = 3000;
 
@@ -1126,6 +1128,8 @@ void setup() {
     car.imu_init();
     car.imu_calibrate();  // sample gyro bias while stationary (~1s)
 #endif
+    menu_init();
+
 #if USE_WIFI_DEBUG
     Serial1.setTX(DEBUG_TX_PIN);
     Serial1.setRX(DEBUG_RX_PIN);
@@ -1156,6 +1160,7 @@ void setup() {
 
 void loop() {
     rp2040.wdt_reset();  // feed hardware watchdog every loop iteration
+    menu_tick();         // poll encoder + redraw OLED (~5µs poll, ~4ms when rendering)
 
     // Drain sensor data even between control ticks
     car.poll_lidars();

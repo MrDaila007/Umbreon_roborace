@@ -4,6 +4,16 @@ All notable changes to the Umbreon Roborace project are documented in this file.
 
 ## [Unreleased] — fix/codebase-audit
 
+### OLED Menu System
+- Add SSD1306 128x64 OLED display + rotary encoder on-car menu (`menu.h`, gated by `USE_OLED_MENU`)
+- 10-screen state machine: dashboard (live sensor bars, speed, battery), settings editor (27 params with type-aware steps), hardware tests, actions (start/stop/save/load/reset), info
+- OLED shares I2C0 (GP0/GP1) with MPU-6050 IMU — no address conflict (0x3C vs 0x68)
+- Encoder on GP12 (CLK), GP22 (DT), GP19 (SW) — available in both sensor configs
+- Navigation: turn=scroll, click=select, hold=back. Fast rotation = larger steps.
+- Confirm dialog for destructive actions (motor tests, EEPROM save/load/reset)
+- Zero overhead when disabled (`USE_OLED_MENU=0` compiles to no-ops)
+- Libraries: Adafruit SSD1306, Adafruit GFX, EncButton
+
 ### Safety (P0)
 - Add 2s timeout to busy-wait loops in `go_back`/`go_back_long` to prevent infinite hangs
 - Guard division by zero when `cfg_encoder_holes=0` in `get_speed`/PID

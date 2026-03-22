@@ -119,7 +119,11 @@ jobs:
           arduino-cli core install rp2040:rp2040
 
       - name: Install Arduino libraries
-        run: arduino-cli lib install "Adafruit_VL53L0X"
+        run: |
+          arduino-cli lib install "Adafruit_VL53L0X"
+          arduino-cli lib install "Adafruit SSD1306"
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "EncButton"
 
       - name: Compile firmware
         run: arduino-cli compile -b rp2040:rp2040:rpipico2 .

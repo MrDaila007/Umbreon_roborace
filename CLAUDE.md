@@ -32,6 +32,7 @@ Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). I
 - arduino-cli is bundled with Arduino IDE at `%LOCALAPPDATA%\Programs\arduino-ide\resources\app\lib\backend\resources\arduino-cli`
 - Libraries (bundled with board package): Servo(rp2040), Wire, EEPROM
 - External library (VL53L0X config): "Adafruit_VL53L0X" (Arduino Library Manager)
+- External libraries (OLED menu): "Adafruit SSD1306", "Adafruit GFX Library", "EncButton" (Arduino Library Manager)
 - WiFi bridge: FQBN `esp8266:esp8266:d1_mini` (Wemos D1 Mini / ESP8266), upload `wifi_debug/wifi_debug.ino`
 - WiFi bridge external library: "WebSockets" by Markus Sattler (Arduino Library Manager)
 
@@ -61,6 +62,7 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:
 - **40 ms control loop** in `work()`: read LiDARs → IMU → steering logic → speed logic → PID → telemetry output → stuck/wrong-direction detection
 - `luna_car.h` is the hardware abstraction layer: LiDAR polling (SerialPIO), servo/ESC PWM, PID, tachometer ISR, IMU I2C
 - `tests.h` provides diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
+- `menu.h` is the OLED SSD1306 + rotary encoder menu system (gated by `USE_OLED_MENU`): 10-screen state machine for dashboard, settings editing, tests, and actions without WiFi
 - **Start/Stop**: car boots stopped by default; `$START`/`$STOP` control driving; idle telemetry streams sensor data when stopped
 - **Remote tests**: 8 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)
 - All distances are in **cm×10** units (e.g., 1200 = 120.0 cm)
@@ -133,7 +135,7 @@ Tests auto-stop the car. Send `$STOP` to abort a running test.
 - Servo range: 40°–140°, neutral 90° (configurable via calibration wizard)
 - ESC range: 1540–1700 µs forward, 1460 µs min reverse, 1500 µs neutral (configurable)
 - Compile flag: `#pragma GCC optimize("Ofast")`
-- Conditional compilation: `USE_WIFI_DEBUG`, `USE_IMU` (defined at top of .ino)
+- Conditional compilation: `USE_WIFI_DEBUG`, `USE_IMU`, `USE_OLED_MENU` (defined at top of .ino)
 
 ## ROS2 Bridge (`ros2/`)
 

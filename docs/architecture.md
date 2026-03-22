@@ -221,6 +221,48 @@ All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU en
 
 ---
 
+## OLED Menu System (`menu.h`) — optional, `USE_OLED_MENU=1`
+
+Standalone on-car interface using an SSD1306 128x64 OLED display and rotary encoder with button.
+
+### Hardware
+
+| Component | Pin | Notes |
+|---|---|---|
+| SSD1306 OLED | GP0 (SDA), GP1 (SCL) | Shared I2C0 bus with MPU-6050 (addr 0x3C vs 0x68) |
+| Rotary encoder CLK | GP12 | |
+| Rotary encoder DT | GP22 | |
+| Rotary encoder SW | GP19 | Button with click/hold/fast detection |
+
+### Libraries
+
+- **Adafruit SSD1306** + **Adafruit GFX** — display driver and graphics primitives
+- **EncButton** by AlexGyver — encoder polling with debounce, click/hold/fast-rotation detection
+
+### Screen state machine
+
+```
+DASHBOARD ──click──> MAIN_MENU
+MAIN_MENU ──select──> Settings | Tests | Actions | Info
+Settings: SETTINGS_GROUPS → SETTINGS_LIST → SETTINGS_EDIT
+Tests: TESTS → CONFIRM (motor tests) → TEST_RUNNING
+Actions: ACTIONS → CONFIRM → execute
+Long-press from anywhere → DASHBOARD
+```
+
+**10 screens:** Dashboard (live sensor bars + speed + battery), Main Menu, Settings Groups, Settings List, Settings Edit (2x font value, encoder adjust), Tests (8 items, motor tests marked [!]), Test Running, Actions (start/stop/save/load/reset), Confirm dialog, Info (FW version, sensors, IMU, battery).
+
+**Navigation:** turn = scroll, click = select/confirm, hold = back/cancel. Fast rotation = larger parameter steps.
+
+### Integration
+
+- `menu_init()` — called in `setup()` after IMU calibration. Initialises Wire if IMU is disabled, starts OLED, shows boot splash.
+- `menu_tick()` — called every `loop()` iteration. Polls encoder (~5µs), redraws at ~8 FPS (~4ms when rendering).
+- All 27 writable parameters are accessible via the settings editor with type-aware steps (int/float/bool).
+- When `USE_OLED_MENU=0`, all functions compile to no-ops — zero overhead.
+
+---
+
 ## Umbreon_roborace.ino — Control Logic
 
 ### Main loop

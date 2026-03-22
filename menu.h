@@ -279,12 +279,14 @@ static void _draw_dashboard() {
     // Sensor bars (visual representation)
     int* s = car.read_sensors();
     const int bar_y = 14;
-    const int bar_h = 6;
-    const int bar_max_w = 100;  // max bar width in pixels
+    const int bar_h = 5;
+    const int bar_spacing = 7;
+    const int bar_max_w = 76;   // leave room for value text on the right
+    const int val_x = 102;      // value text starts here
     const int max_range = MAX_SENSOR_RANGE;
 
     for (int i = 0; i < SENSOR_COUNT && i < 6; i++) {
-        int y = bar_y + i * (bar_h + 2);
+        int y = bar_y + i * bar_spacing;
         // Label
         _oled.setCursor(0, y);
         _oled.print(_sensor_short[i]);
@@ -302,7 +304,7 @@ static void _draw_dashboard() {
         char vb[6];
         if (s[i] == 9999) snprintf(vb, sizeof(vb), "--");
         else               snprintf(vb, sizeof(vb), "%d", s[i] / 10);
-        _oled.setCursor(SCREEN_W - strlen(vb) * 6, y);
+        _oled.setCursor(val_x, y);
         _oled.print(vb);
     }
 
@@ -424,11 +426,11 @@ static void _draw_edit() {
     } else {
         snprintf(rbuf, sizeof(rbuf), "Range: %.1f..%.1f", (double)p.lo, (double)p.hi);
     }
-    _oled.setCursor(2, 50);
+    _oled.setCursor(2, 48);
     _oled.print(rbuf);
 
     // Hint
-    _oled.setCursor(2, 58);
+    _oled.setCursor(2, 56);
     _oled.print("Click=OK  Hold=Cancel");
 }
 
@@ -480,7 +482,7 @@ static void _draw_test_running() {
     _oled.setCursor(2, 48);
     for (uint8_t i = 0; i < dots; i++) _oled.print('.');
 
-    _oled.setCursor(2, 58);
+    _oled.setCursor(2, 56);
     _oled.print("Click = Abort");
 }
 

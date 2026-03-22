@@ -14,8 +14,8 @@
 static const char* _sensor_labels[SENSOR_COUNT] = {"Left    ", "FrontL  ", "FrontR  ", "Right   "};
 static const char* _sensor_short[SENSOR_COUNT]  = {"L", "FL", "FR", "R"};
 #elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
-static const char* _sensor_labels[SENSOR_COUNT] = {"HardL   ", "Left    ", "FrontL  ", "FrontR  ", "Right   ", "HardR   "};
-static const char* _sensor_short[SENSOR_COUNT]  = {"HL", "L", "FL", "FR", "R", "HR"};
+static const char* _sensor_labels[SENSOR_COUNT] = {"HardR   ", "FrontR  ", "Right   ", "Left    ", "FrontL  ", "HardL   "};
+static const char* _sensor_short[SENSOR_COUNT]  = {"HR", "FR", "R", "L", "FL", "HL"};
 #endif
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

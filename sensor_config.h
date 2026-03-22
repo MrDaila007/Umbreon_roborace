@@ -36,12 +36,12 @@
 #elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
 
 #define SENSOR_COUNT        6
-#define IDX_HARD_LEFT       0
-#define IDX_LEFT            1
-#define IDX_FRONT_LEFT      2
-#define IDX_FRONT_RIGHT     3
-#define IDX_RIGHT           4
-#define IDX_HARD_RIGHT      5
+#define IDX_HARD_RIGHT      0
+#define IDX_FRONT_RIGHT     1
+#define IDX_RIGHT           2
+#define IDX_LEFT            3
+#define IDX_FRONT_LEFT      4
+#define IDX_HARD_LEFT       5
 #define HAS_HARD_SIDES      1
 #define MAX_SENSOR_RANGE    2000   // cm×10  (200 cm)
 
@@ -52,8 +52,8 @@
 #define DEFAULT_CFD          150
 
 // I2C bus (Wire1 on RP2350)
-#define VL53_SDA            20
-#define VL53_SCL            21
+#define VL53_SDA            2
+#define VL53_SCL            3
 
 // XSHUT pins — one per sensor, active-low
 #define VL53_XSHUT_PINS     {6, 7, 8, 9, 14, 15}

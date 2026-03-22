@@ -209,23 +209,58 @@ void Car::init() {
     }
     delay(10);
 
+    // I2C1 bus recovery: toggle SCL to free stuck SDA
+    pinMode(VL53_SDA, INPUT_PULLUP);
+    pinMode(VL53_SCL, OUTPUT);
+    for (int j = 0; j < 16; j++) {
+        digitalWrite(VL53_SCL, LOW);
+        delayMicroseconds(5);
+        digitalWrite(VL53_SCL, HIGH);
+        delayMicroseconds(5);
+    }
+    // STOP condition: SDA LOW→HIGH while SCL HIGH
+    pinMode(VL53_SDA, OUTPUT);
+    digitalWrite(VL53_SDA, LOW);
+    delayMicroseconds(5);
+    digitalWrite(VL53_SCL, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(VL53_SDA, HIGH);
+    delayMicroseconds(5);
+
+    // Check bus lines are free
+    pinMode(VL53_SDA, INPUT_PULLUP);
+    pinMode(VL53_SCL, INPUT_PULLUP);
+    delay(1);
+    bool i2c1_ok = digitalRead(VL53_SDA) && digitalRead(VL53_SCL);
+
+    if (!i2c1_ok) {
+        Serial.println("VL53: I2C1 bus stuck, sensors disabled");
+        for (int i = 0; i < SENSOR_COUNT; i++) _vl53_valid[i] = false;
+    }
+
     // Initialize Wire1 for VL53L0X sensors
-    Wire1.setSDA(VL53_SDA);
-    Wire1.setSCL(VL53_SCL);
-    Wire1.begin();
-    Wire1.setClock(400000);
+    int vl53_ok = 0;
+    if (i2c1_ok) {
+        Wire1.setSDA(VL53_SDA);
+        Wire1.setSCL(VL53_SCL);
+        Wire1.begin();
+        Wire1.setClock(100000);
+        Wire1.setTimeout(50);
 
-    // Enable sensors one by one and assign unique I2C addresses
-    for (int i = 0; i < SENSOR_COUNT; i++) {
-        digitalWrite(_vl53_xshut[i], HIGH);
-        delay(10);  // allow sensor to boot
+        // Enable sensors one by one and assign unique I2C addresses
+        for (int i = 0; i < SENSOR_COUNT; i++) {
+            digitalWrite(_vl53_xshut[i], HIGH);
+            delay(50);
 
-        if (_vl53_sensors[i].begin(VL53_BASE_ADDR + i, false, &Wire1)) {
-            // Start continuous ranging (~33ms measurement period)
-            _vl53_sensors[i].startRangeContinuous(33);
-            _vl53_valid[i] = true;
+            if (_vl53_sensors[i].begin(VL53_BASE_ADDR + i, false, &Wire1)) {
+                _vl53_sensors[i].startRangeContinuous(33);
+                _vl53_valid[i] = true;
+                vl53_ok++;
+            }
         }
     }
+    Serial.print("VL53: "); Serial.print(vl53_ok);
+    Serial.print("/"); Serial.print(SENSOR_COUNT); Serial.println(" online");
 #endif
 }
 

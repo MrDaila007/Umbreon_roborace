@@ -487,75 +487,90 @@ static void _draw_test_running() {
 }
 
 // ─── Info screen ─────────────────────────────────────────────────────────────
-static void _draw_info() {
-    _oled.fillRect(0, 0, SCREEN_W, 10, SSD1306_WHITE);
-    _oled.setTextColor(SSD1306_BLACK);
-    _oled.setCursor(2, 1);
-    _oled.print("Info");
-    _oled.setTextColor(SSD1306_WHITE);
+// Info screen: scrollable list of status lines
+static const int INFO_VISIBLE = 6;  // visible lines after title bar
+static int _info_scroll = 0;
 
-    _oled.setCursor(2, 12);
-    _oled.print("FW: v");
-    _oled.print(FW_VERSION);
+// Build info lines into a buffer, return count
+static int _info_build(char lines[][22]) {
+    int n = 0;
 
-    _oled.setCursor(2, 21);
-    _oled.print("Sns: ");
-    _oled.print(SENSOR_COUNT);
+    snprintf(lines[n++], 22, "FW: v%s", FW_VERSION);
+
 #if SENSOR_CONFIG == SENSOR_4X_LUNA
-    _oled.print(" Luna");
+    snprintf(lines[n++], 22, "Sensors: %d (Luna)", SENSOR_COUNT);
 #elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
-    _oled.print(" VL53");
-#endif
-    _oled.print("  IMU:");
-#if USE_IMU
-    _oled.print(car.imu_ok ? "OK" : "--");
+    snprintf(lines[n++], 22, "Sensors: %d (VL53)", SENSOR_COUNT);
 #else
-    _oled.print("--");
+    snprintf(lines[n++], 22, "Sensors: %d", SENSOR_COUNT);
 #endif
 
-    _oled.setCursor(2, 30);
-    _oled.print("Bat: ");
-    if (cfg_bat_enabled) {
-        char vbuf[8];
-        snprintf(vbuf, sizeof(vbuf), "%.1fV", (double)car.bat_voltage);
-        _oled.print(vbuf);
-    } else {
-        _oled.print("Off");
-    }
-    _oled.print("  Loop:");
-    _oled.print(cfg_loop_ms);
-    _oled.print("ms");
+#if USE_IMU
+    snprintf(lines[n++], 22, "IMU: %s", car.imu_ok ? "OK" : "FAIL");
+#else
+    snprintf(lines[n++], 22, "IMU: Disabled");
+#endif
 
-    // WiFi status from ESP
-    _oled.drawFastHLine(0, 40, SCREEN_W, SSD1306_WHITE);
+    if (cfg_bat_enabled) {
+        snprintf(lines[n++], 22, "Bat: %.1fV", (double)car.bat_voltage);
+    } else {
+        snprintf(lines[n++], 22, "Bat: Disabled");
+    }
+
+    snprintf(lines[n++], 22, "Loop: %dms  Enc: %d", cfg_loop_ms, cfg_encoder_holes);
+
+    // WiFi section
 #if USE_WIFI_DEBUG
     extern bool esp_wifi_ready;
     extern bool esp_wifi_is_ap;
     extern char esp_wifi_ssid[];
     extern char esp_wifi_ip[];
 
-    _oled.setCursor(2, 43);
     if (!esp_wifi_ready) {
-        _oled.print("WiFi: waiting...");
+        snprintf(lines[n++], 22, "WiFi: waiting...");
     } else {
-        _oled.print("WiFi: ");
-        _oled.print(esp_wifi_is_ap ? "AP" : "STA");
+        snprintf(lines[n++], 22, "WiFi: %s", esp_wifi_is_ap ? "AP" : "STA");
     }
-
-    _oled.setCursor(2, 52);
     if (esp_wifi_ssid[0]) {
-        _oled.print(esp_wifi_ssid);
+        snprintf(lines[n++], 22, "Net: %s", esp_wifi_ssid);
     }
     if (esp_wifi_ip[0]) {
-        // Right-align IP
-        int ip_w = strlen(esp_wifi_ip) * 6;
-        _oled.setCursor(SCREEN_W - ip_w, 52);
-        _oled.print(esp_wifi_ip);
+        snprintf(lines[n++], 22, "IP: %s", esp_wifi_ip);
     }
 #else
-    _oled.setCursor(2, 43);
-    _oled.print("WiFi: Disabled");
+    snprintf(lines[n++], 22, "WiFi: Disabled");
 #endif
+
+    return n;
+}
+
+static void _draw_info() {
+    // Title bar
+    _oled.fillRect(0, 0, SCREEN_W, 10, SSD1306_WHITE);
+    _oled.setTextColor(SSD1306_BLACK);
+    _oled.setCursor(2, 1);
+    _oled.print("Info");
+    _oled.setTextColor(SSD1306_WHITE);
+
+    char lines[12][22];
+    int count = _info_build(lines);
+
+    // Clamp scroll
+    if (_info_scroll > count - INFO_VISIBLE) _info_scroll = count - INFO_VISIBLE;
+    if (_info_scroll < 0) _info_scroll = 0;
+
+    // Draw visible lines
+    for (int i = 0; i < INFO_VISIBLE && (_info_scroll + i) < count; i++) {
+        _oled.setCursor(2, 12 + i * 9);
+        _oled.print(lines[_info_scroll + i]);
+    }
+
+    // Scroll indicator
+    if (count > INFO_VISIBLE) {
+        int bar_h = max(4, (int)(SCREEN_H * INFO_VISIBLE / count));
+        int bar_y = (int)((long)_info_scroll * (SCREEN_H - bar_h) / max(1, count - INFO_VISIBLE));
+        _oled.fillRect(SCREEN_W - 2, bar_y, 2, bar_h, SSD1306_WHITE);
+    }
 }
 
 // ─── Navigation logic ────────────────────────────────────────────────────────
@@ -844,7 +859,8 @@ static void _handle_input() {
             break;
 
         case SCR_INFO:
-            if (click) _go_back();
+            if (dir != 0) _info_scroll += dir;
+            if (click) { _info_scroll = 0; _go_back(); }
             break;
     }
 }

@@ -1178,6 +1178,8 @@ void setup() {
     Serial1.print(",yaw,heading");
 #endif
     Serial1.println();
+    // Query ESP WiFi status (ESP may have booted before us)
+    Serial1.println("#WIFISTATUS");
 #endif
 
     // Run ESC+servo calibration on first boot (or after $RST + reboot)

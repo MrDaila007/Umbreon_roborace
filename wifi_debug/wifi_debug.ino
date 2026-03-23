@@ -258,8 +258,20 @@ void loop() {
         if (c == '\n') {
             if (uart_pos > 0) {
                 uart_line[uart_pos] = '\0';
-                if (tcp_live) tcpClient.println(uart_line);
-                wsServer.broadcastTXT(uart_line);
+
+                // Handle #WIFISTATUS query from Pico — reply with WiFi info
+                if (strcmp(uart_line, "#WIFISTATUS") == 0) {
+                    Serial.print("# Mode:  ");
+                    Serial.println(wifi_is_sta ? "STA" : "AP");
+                    Serial.print("# SSID:  ");
+                    Serial.println(wifi_is_sta ? STA_SSID : AP_SSID);
+                    Serial.print("# IP:    ");
+                    Serial.println(wifi_is_sta ? WiFi.localIP() : WiFi.softAPIP());
+                    Serial.println("# Status: ready");
+                } else {
+                    if (tcp_live) tcpClient.println(uart_line);
+                    wsServer.broadcastTXT(uart_line);
+                }
                 uart_pos = 0;
             }
         } else if (c != '\r' && uart_pos < (int)sizeof(uart_line) - 1) {

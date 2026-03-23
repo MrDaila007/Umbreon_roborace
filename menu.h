@@ -66,6 +66,7 @@ struct ParamDesc {
     float       lo;        // min value
     float       hi;        // max value
     void*       ptr;       // pointer to cfg_* global
+    float       scale;     // display scale (1.0 = as-is, 1000.0 = m→mm)
 };
 
 // Forward-declare cfg_* globals (defined in .ino)
@@ -101,42 +102,43 @@ extern float cfg_bat_low;
 
 // ─── Parameter table (27 writable params) ────────────────────────────────────
 static const ParamDesc _params[] = {
+    //                    type     step  fast   lo     hi     ptr                       scale
     // Obstacles (cm×10)
-    {"FOD", "Front Obs",  PT_INT,   10,  100,   50, 9000, &cfg_front_obstacle_dist},
-    {"SOD", "Side Open",  PT_INT,   10,  100,   50, 9000, &cfg_side_open_dist},
-    {"ACD", "All Close",  PT_INT,   10,  100,   50, 9000, &cfg_all_close_dist},
-    {"CFD", "Close Frt",  PT_INT,   10,  100,   50, 9000, &cfg_close_front_dist},
+    {"FOD", "Front Obs",  PT_INT,   10,  100,   50, 9000, &cfg_front_obstacle_dist,    1},
+    {"SOD", "Side Open",  PT_INT,   10,  100,   50, 9000, &cfg_side_open_dist,         1},
+    {"ACD", "All Close",  PT_INT,   10,  100,   50, 9000, &cfg_all_close_dist,         1},
+    {"CFD", "Close Frt",  PT_INT,   10,  100,   50, 9000, &cfg_close_front_dist,       1},
     // PID
-    {"KP",  "PID Kp",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_kp},
-    {"KI",  "PID Ki",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_ki},
-    {"KD",  "PID Kd",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_kd},
+    {"KP",  "PID Kp",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_kp,                1},
+    {"KI",  "PID Ki",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_ki,                1},
+    {"KD",  "PID Kd",     PT_FLOAT, 0.1f, 1.0f, 0, 200,  &cfg_pid_kd,                1},
     // Speed / ESC (µs)
-    {"MSP", "Min Spd",    PT_INT,   5,   20,  1500, 2000, &cfg_min_speed},
-    {"XSP", "Max Spd",    PT_INT,   5,   20,  1500, 2000, &cfg_max_speed},
-    {"BSP", "Min Bck",    PT_INT,   5,   20,  1000, 1500, &cfg_min_bspeed},
+    {"MSP", "Min Spd",    PT_INT,   5,   20,  1500, 2000, &cfg_min_speed,              1},
+    {"XSP", "Max Spd",    PT_INT,   5,   20,  1500, 2000, &cfg_max_speed,              1},
+    {"BSP", "Min Bck",    PT_INT,   5,   20,  1000, 1500, &cfg_min_bspeed,             1},
     // Steering (degrees)
-    {"MNP", "Srv Min",    PT_INT,   1,    5,    0, 90,    &cfg_min_point},
-    {"XNP", "Srv Max",    PT_INT,   1,    5,   90, 180,   &cfg_max_point},
-    {"NTP", "Srv Neu",    PT_INT,   1,    5,    0, 180,   &cfg_neutral_point},
+    {"MNP", "Srv Min",    PT_INT,   1,    5,    0, 90,    &cfg_min_point,              1},
+    {"XNP", "Srv Max",    PT_INT,   1,    5,   90, 180,   &cfg_max_point,              1},
+    {"NTP", "Srv Neu",    PT_INT,   1,    5,    0, 180,   &cfg_neutral_point,          1},
     // Tachometer
-    {"ENH", "Enc Holes",  PT_INT,   1,   10,    1, 200,   &cfg_encoder_holes},
-    {"WDM", "Wheel D",    PT_FLOAT, 0.001f, 0.01f, 0.01f, 0.5f, &cfg_wheel_diam_m},
+    {"ENH", "Enc Holes",  PT_INT,   1,   10,    1, 200,   &cfg_encoder_holes,          1},
+    {"WDM", "Wheel mm",   PT_FLOAT, 1,   10,   10, 500,   &cfg_wheel_diam_m,        1000},  // display mm, store m
     // Control
-    {"LMS", "Loop ms",    PT_INT,   5,   10,   10, 200,   &cfg_loop_ms},
-    {"SPD1","Spd Clr",    PT_FLOAT, 0.1f, 0.5f, 0, 5.0f,  &cfg_spd_clear},
-    {"SPD2","Spd Blk",    PT_FLOAT, 0.1f, 0.5f, 0, 5.0f,  &cfg_spd_blocked},
-    {"COE1","Coe Clr",    PT_FLOAT, 0.05f, 0.1f, 0, 2.0f, &cfg_coe_clear},
-    {"COE2","Coe Blk",    PT_FLOAT, 0.05f, 0.1f, 0, 2.0f, &cfg_coe_blocked},
+    {"LMS", "Loop ms",    PT_INT,   5,   10,   10, 200,   &cfg_loop_ms,               1},
+    {"SPD1","Spd Clr",    PT_FLOAT, 0.1f, 0.5f, 0, 5.0f,  &cfg_spd_clear,            1},
+    {"SPD2","Spd Blk",    PT_FLOAT, 0.1f, 0.5f, 0, 5.0f,  &cfg_spd_blocked,          1},
+    {"COE1","Coe Clr",    PT_FLOAT, 0.05f, 0.1f, 0, 2.0f, &cfg_coe_clear,            1},
+    {"COE2","Coe Blk",    PT_FLOAT, 0.05f, 0.1f, 0, 2.0f, &cfg_coe_blocked,          1},
     // Navigation
-    {"WDD", "Wrong Dir",  PT_FLOAT, 5.0f, 20.0f, 10, 360, &cfg_wrong_dir_deg},
-    {"RCW", "Race CW",    PT_BOOL,  1,    1,     0, 1,    &cfg_race_cw},
-    {"STK", "Stuck Thr",  PT_INT,   1,    5,     1, 100,  &cfg_stuck_thresh},
+    {"WDD", "Wrong Dir",  PT_FLOAT, 5.0f, 20.0f, 10, 360, &cfg_wrong_dir_deg,        1},
+    {"RCW", "Race CW",    PT_BOOL,  1,    1,     0, 1,    &cfg_race_cw,               1},
+    {"STK", "Stuck Thr",  PT_INT,   1,    5,     1, 100,  &cfg_stuck_thresh,           1},
     // Hardware flags
-    {"IMR", "IMU Rot",    PT_BOOL,  1,    1,     0, 1,    &cfg_imu_rotate},
-    {"SVR", "Srv Rev",    PT_BOOL,  1,    1,     0, 1,    &cfg_servo_reverse},
-    {"BEN", "Bat En",     PT_BOOL,  1,    1,     0, 1,    &cfg_bat_enabled},
-    {"BML", "Bat Mult",   PT_FLOAT, 0.1f, 0.5f, 1.0f, 10.0f, &cfg_bat_multiplier},
-    {"BLV", "Bat Low V",  PT_FLOAT, 0.1f, 0.5f, 3.0f, 12.0f, &cfg_bat_low},
+    {"IMR", "IMU Rot",    PT_BOOL,  1,    1,     0, 1,    &cfg_imu_rotate,             1},
+    {"SVR", "Srv Rev",    PT_BOOL,  1,    1,     0, 1,    &cfg_servo_reverse,          1},
+    {"BEN", "Bat En",     PT_BOOL,  1,    1,     0, 1,    &cfg_bat_enabled,            1},
+    {"BML", "Bat Mult",   PT_FLOAT, 0.1f, 0.5f, 1.0f, 10.0f, &cfg_bat_multiplier,    1},
+    {"BLV", "Bat Low V",  PT_FLOAT, 0.1f, 0.5f, 3.0f, 12.0f, &cfg_bat_low,           1},
 };
 static const int PARAM_COUNT = sizeof(_params) / sizeof(_params[0]);
 
@@ -209,20 +211,23 @@ static bool  _confirm_yes   = false;// cursor in confirm dialog
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 static float _param_get(const ParamDesc& p) {
+    float raw;
     switch (p.type) {
-        case PT_INT:   return (float)(*(int*)p.ptr);
-        case PT_FLOAT: return *(float*)p.ptr;
+        case PT_INT:   raw = (float)(*(int*)p.ptr);  break;
+        case PT_FLOAT: raw = *(float*)p.ptr;          break;
         case PT_BOOL:  return *(bool*)p.ptr ? 1.0f : 0.0f;
+        default:       return 0;
     }
-    return 0;
+    return raw * p.scale;  // e.g. 0.060 m * 1000 = 60 mm
 }
 
 static void _param_set(const ParamDesc& p, float v) {
     v = constrain(v, p.lo, p.hi);
+    float raw = v / p.scale;  // e.g. 60 mm / 1000 = 0.060 m
     switch (p.type) {
-        case PT_INT:   *(int*)p.ptr   = (int)v;     break;
-        case PT_FLOAT: *(float*)p.ptr = v;           break;
-        case PT_BOOL:  *(bool*)p.ptr  = (v > 0.5f); break;
+        case PT_INT:   *(int*)p.ptr   = (int)raw;    break;
+        case PT_FLOAT: *(float*)p.ptr = raw;          break;
+        case PT_BOOL:  *(bool*)p.ptr  = (v > 0.5f);  break;
     }
 }
 
@@ -230,7 +235,10 @@ static void _param_set(const ParamDesc& p, float v) {
 static int _param_fmt(char* buf, int sz, const ParamDesc& p, float v) {
     switch (p.type) {
         case PT_INT:   return snprintf(buf, sz, "%d", (int)v);
-        case PT_FLOAT: return snprintf(buf, sz, "%.2f", (double)v);
+        case PT_FLOAT:
+            // If scale is applied (e.g. m→mm), show as integer
+            if (p.scale != 1.0f) return snprintf(buf, sz, "%d", (int)(v + 0.5f));
+            return snprintf(buf, sz, "%.2f", (double)v);
         case PT_BOOL:  return snprintf(buf, sz, "%s", v > 0.5f ? "ON" : "OFF");
     }
     return 0;
@@ -364,21 +372,26 @@ static void _draw_list(const char* title, int count,
 }
 
 // ─── Main menu items ─────────────────────────────────────────────────────────
+// idx 0 = "< Back", idx 1..4 = items
 static const char* _main_items[] = {"Settings", "Tests", "Actions", "Info"};
-static const int MAIN_COUNT = 4;
+static const int MAIN_REAL = 4;
+static const int MAIN_COUNT = MAIN_REAL + 1;  // +1 top Back
 
 static void _main_item_fn(int idx, char* buf, int sz) {
-    snprintf(buf, sz, "%s", _main_items[idx]);
+    if (idx == 0) { snprintf(buf, sz, "< Back"); return; }
+    snprintf(buf, sz, "%s", _main_items[idx - 1]);
 }
 
 // ─── Settings groups item renderer ───────────────────────────────────────────
 static void _group_item_fn(int idx, char* buf, int sz) {
-    snprintf(buf, sz, "%s (%d)", _groups[idx].name, _groups[idx].count);
+    if (idx == 0) { snprintf(buf, sz, "< Back"); return; }
+    snprintf(buf, sz, "%s (%d)", _groups[idx - 1].name, _groups[idx - 1].count);
 }
 
 // ─── Settings list (params in a group) ───────────────────────────────────────
 static void _param_item_fn(int idx, char* buf, int sz) {
-    int pi = _groups[_grp_sel].start + idx;
+    if (idx == 0) { snprintf(buf, sz, "< Back"); return; }
+    int pi = _groups[_grp_sel].start + (idx - 1);
     const ParamDesc& p = _params[pi];
     char vbuf[10];
     _param_fmt(vbuf, sizeof(vbuf), p, _param_get(p));
@@ -387,12 +400,14 @@ static void _param_item_fn(int idx, char* buf, int sz) {
 
 // ─── Tests item renderer ────────────────────────────────────────────────────
 static void _test_item_fn(int idx, char* buf, int sz) {
-    snprintf(buf, sz, "%s%s", _tests[idx].label, _tests[idx].motor ? " [!]" : "");
+    if (idx == 0) { snprintf(buf, sz, "< Back"); return; }
+    snprintf(buf, sz, "%s%s", _tests[idx - 1].label, _tests[idx - 1].motor ? " [!]" : "");
 }
 
 // ─── Actions item renderer ──────────────────────────────────────────────────
 static void _action_item_fn(int idx, char* buf, int sz) {
-    snprintf(buf, sz, "%s", _actions[idx].label);
+    if (idx == 0) { snprintf(buf, sz, "< Back"); return; }
+    snprintf(buf, sz, "%s", _actions[idx - 1].label);
 }
 
 // ─── Settings edit screen ────────────────────────────────────────────────────
@@ -421,14 +436,14 @@ static void _draw_edit() {
     _oled.print(vbuf);
     _oled.setTextSize(1);
 
-    // Range
+    // Range + Step
     char rbuf[22];
     if (p.type == PT_BOOL) {
         snprintf(rbuf, sizeof(rbuf), "Turn to toggle");
     } else if (p.type == PT_INT) {
-        snprintf(rbuf, sizeof(rbuf), "Range: %d..%d", (int)p.lo, (int)p.hi);
+        snprintf(rbuf, sizeof(rbuf), "%d..%d  step %d", (int)p.lo, (int)p.hi, (int)p.step);
     } else {
-        snprintf(rbuf, sizeof(rbuf), "Range: %.1f..%.1f", (double)p.lo, (double)p.hi);
+        snprintf(rbuf, sizeof(rbuf), "%.1f..%.1f step %.2f", (double)p.lo, (double)p.hi, (double)p.step);
     }
     _oled.setCursor(2, 48);
     _oled.print(rbuf);
@@ -500,6 +515,7 @@ static int _info_build(char lines[][22]) {
     int n = 0;
 
     snprintf(lines[n++], 22, "FW: v%s", FW_VERSION);
+    snprintf(lines[n++], 22, "Cores: 2 (dual-core)");
 
 #if SENSOR_CONFIG == SENSOR_4X_LUNA
     snprintf(lines[n++], 22, "Sensors: %d (Luna)", SENSOR_COUNT);
@@ -522,6 +538,11 @@ static int _info_build(char lines[][22]) {
     }
 
     snprintf(lines[n++], 22, "Loop: %dms  Enc: %d", cfg_loop_ms, cfg_encoder_holes);
+
+    // Uptime
+    unsigned long secs = millis() / 1000;
+    unsigned long mins = secs / 60;
+    snprintf(lines[n++], 22, "Up: %lum %lus", mins, secs % 60);
 
     // WiFi section
 #if USE_WIFI_DEBUG
@@ -556,7 +577,7 @@ static void _draw_info() {
     _oled.print("Info");
     _oled.setTextColor(SSD1306_WHITE);
 
-    char lines[12][22];
+    char lines[14][22];
     int count = _info_build(lines);
 
     // Clamp scroll
@@ -582,7 +603,10 @@ static void _draw_info() {
 static void _go_screen(MenuScreen scr) {
     _scr_prev = _scr;
     _scr = scr;
-    _sel = 0;
+    // Start on first real item (skip top "< Back")
+    _sel = (scr == SCR_MAIN_MENU || scr == SCR_SETTINGS_GROUPS ||
+            scr == SCR_SETTINGS_LIST || scr == SCR_TESTS || scr == SCR_ACTIONS)
+           ? 1 : 0;
     _scroll = 0;
 }
 
@@ -599,7 +623,7 @@ static void _go_back() {
         case SCR_TEST_RUNNING:    break;  // can't go back, click = abort
         default:                  _scr = SCR_DASHBOARD;       break;
     }
-    _sel = 0;
+    _sel = 1;    // start on first real item (skip top "< Back")
     _scroll = 0;
 }
 
@@ -658,33 +682,39 @@ static void _handle_input() {
             _sel += dir;
             _clamp_scroll(_sel, _scroll, MAIN_COUNT, LIST_VISIBLE);
             if (click) {
-                switch (_sel) {
-                    case 0: _go_screen(SCR_SETTINGS_GROUPS); break;
-                    case 1: _go_screen(SCR_TESTS);           break;
-                    case 2: _go_screen(SCR_ACTIONS);          break;
-                    case 3: _go_screen(SCR_INFO);             break;
+                if (_sel == 0) { _go_back(); }
+                else switch (_sel) {
+                    case 1: _go_screen(SCR_SETTINGS_GROUPS); break;
+                    case 2: _go_screen(SCR_TESTS);           break;
+                    case 3: _go_screen(SCR_ACTIONS);          break;
+                    case 4: _go_screen(SCR_INFO);             break;
                 }
             }
             break;
 
-        case SCR_SETTINGS_GROUPS:
-            _sel += dir;
-            _clamp_scroll(_sel, _scroll, GROUP_COUNT, LIST_VISIBLE);
-            if (click) {
-                _grp_sel = _sel;
-                _go_screen(SCR_SETTINGS_LIST);
-            }
-            break;
-
-        case SCR_SETTINGS_LIST: {
-            int cnt = _groups[_grp_sel].count;
+        case SCR_SETTINGS_GROUPS: {
+            int cnt = GROUP_COUNT + 1;  // +1 top Back
             _sel += dir;
             _clamp_scroll(_sel, _scroll, cnt, LIST_VISIBLE);
             if (click) {
-                _param_idx = _groups[_grp_sel].start + _sel;
-                const ParamDesc& p = _params[_param_idx];
-                _edit_val = _param_get(p);
-                _go_screen(SCR_SETTINGS_EDIT);
+                if (_sel == 0) { _go_back(); }
+                else { _grp_sel = _sel - 1; _go_screen(SCR_SETTINGS_LIST); }
+            }
+            break;
+        }
+
+        case SCR_SETTINGS_LIST: {
+            int cnt = _groups[_grp_sel].count + 1;  // +1 top Back
+            _sel += dir;
+            _clamp_scroll(_sel, _scroll, cnt, LIST_VISIBLE);
+            if (click) {
+                if (_sel == 0) { _go_back(); }
+                else {
+                    _param_idx = _groups[_grp_sel].start + (_sel - 1);
+                    const ParamDesc& p = _params[_param_idx];
+                    _edit_val = _param_get(p);
+                    _go_screen(SCR_SETTINGS_EDIT);
+                }
             }
             break;
         }
@@ -704,35 +734,40 @@ static void _handle_input() {
                 // Apply value
                 _param_set(p, _edit_val);
                 _scr = SCR_SETTINGS_LIST;
-                _sel = _param_idx - _groups[_grp_sel].start;
+                _sel = (_param_idx - _groups[_grp_sel].start) + 1;  // +1 for top Back
                 _scroll = 0;
-                _clamp_scroll(_sel, _scroll, _groups[_grp_sel].count, LIST_VISIBLE);
+                _clamp_scroll(_sel, _scroll, _groups[_grp_sel].count + 1, LIST_VISIBLE);
             }
             break;
         }
 
-        case SCR_TESTS:
+        case SCR_TESTS: {
+            int tcnt = TEST_COUNT + 1;  // +1 top Back
             _sel += dir;
-            _clamp_scroll(_sel, _scroll, TEST_COUNT, LIST_VISIBLE);
+            _clamp_scroll(_sel, _scroll, tcnt, LIST_VISIBLE);
             if (click) {
-                if (_tests[_sel].motor) {
-                    // Show confirm dialog
-                    _test_idx = _sel;
-                    _confirm_msg = _tests[_sel].label;
-                    _confirm_yes = false;
-                    _scr_prev = SCR_TESTS;
-                    _go_screen(SCR_CONFIRM);
-                } else {
-                    _run_test(_sel);
+                if (_sel == 0) { _go_back(); }
+                else {
+                    int ti = _sel - 1;  // real test index
+                    if (_tests[ti].motor) {
+                        _test_idx = ti;
+                        _confirm_msg = _tests[ti].label;
+                        _confirm_yes = false;
+                        _scr_prev = SCR_TESTS;
+                        _go_screen(SCR_CONFIRM);
+                    } else {
+                        _run_test(ti);
+                    }
                 }
             }
             break;
+        }
 
         case SCR_TEST_RUNNING:
             // Auto-return when Core 0 finishes the test
             if (!core1_test_active) {
                 _scr = SCR_TESTS;
-                _sel = _test_idx;
+                _sel = _test_idx + 1;  // +1 for top Back
                 _scroll = 0;
             }
             // Click sends abort request (Core 0 test checks wifi_check_abort)
@@ -742,22 +777,28 @@ static void _handle_input() {
             }
             break;
 
-        case SCR_ACTIONS:
+        case SCR_ACTIONS: {
+            int acnt = ACTION_COUNT + 1;  // +1 top Back
             _sel += dir;
-            _clamp_scroll(_sel, _scroll, ACTION_COUNT, LIST_VISIBLE);
+            _clamp_scroll(_sel, _scroll, acnt, LIST_VISIBLE);
             if (click) {
-                _action_idx = _sel;
-                if (_actions[_sel].confirm) {
-                    _confirm_msg = _actions[_sel].label;
-                    _confirm_yes = false;
-                    _scr_prev = SCR_ACTIONS;
-                    _go_screen(SCR_CONFIRM);
-                } else {
-                    _exec_action(_actions[_sel].id);
-                    _go_screen(SCR_DASHBOARD);
+                if (_sel == 0) { _go_back(); }
+                else {
+                    int ai = _sel - 1;  // real action index
+                    _action_idx = ai;
+                    if (_actions[ai].confirm) {
+                        _confirm_msg = _actions[ai].label;
+                        _confirm_yes = false;
+                        _scr_prev = SCR_ACTIONS;
+                        _go_screen(SCR_CONFIRM);
+                    } else {
+                        _exec_action(_actions[ai].id);
+                        _go_screen(SCR_DASHBOARD);
+                    }
                 }
             }
             break;
+        }
 
         case SCR_CONFIRM:
             if (dir != 0) _confirm_yes = !_confirm_yes;
@@ -799,23 +840,23 @@ static void _draw_screen_to_buffer() {
             _draw_list("Menu", MAIN_COUNT, _main_item_fn, _sel, _scroll);
             break;
         case SCR_SETTINGS_GROUPS:
-            _draw_list("Settings", GROUP_COUNT, _group_item_fn, _sel, _scroll);
+            _draw_list("Settings", GROUP_COUNT + 1, _group_item_fn, _sel, _scroll);
             break;
         case SCR_SETTINGS_LIST:
-            _draw_list(_groups[_grp_sel].name, _groups[_grp_sel].count,
+            _draw_list(_groups[_grp_sel].name, _groups[_grp_sel].count + 1,
                        _param_item_fn, _sel, _scroll);
             break;
         case SCR_SETTINGS_EDIT:
             _draw_edit();
             break;
         case SCR_TESTS:
-            _draw_list("Tests", TEST_COUNT, _test_item_fn, _sel, _scroll);
+            _draw_list("Tests", TEST_COUNT + 1, _test_item_fn, _sel, _scroll);
             break;
         case SCR_TEST_RUNNING:
             _draw_test_running();
             break;
         case SCR_ACTIONS:
-            _draw_list("Actions", ACTION_COUNT, _action_item_fn, _sel, _scroll);
+            _draw_list("Actions", ACTION_COUNT + 1, _action_item_fn, _sel, _scroll);
             break;
         case SCR_CONFIRM:
             _draw_confirm();

@@ -29,12 +29,12 @@ All downstream code uses **role indices** (`IDX_LEFT`, `IDX_FRONT_LEFT`, etc.) a
 
 | Index | 4× TF-Luna | 6× VL53L0X |
 |---|---|---|
-| `IDX_HARD_LEFT` | — | s[0] |
-| `IDX_LEFT` | s[0] | s[1] |
-| `IDX_FRONT_LEFT` | s[1] | s[2] |
-| `IDX_FRONT_RIGHT` | s[2] | s[3] |
-| `IDX_RIGHT` | s[3] | s[4] |
-| `IDX_HARD_RIGHT` | — | s[5] |
+| `IDX_HARD_RIGHT` | — | s[0] |
+| `IDX_FRONT_RIGHT` | — | s[1] |
+| `IDX_RIGHT` | s[3] | s[2] |
+| `IDX_LEFT` | s[0] | s[3] |
+| `IDX_FRONT_LEFT` | s[1] | s[4] |
+| `IDX_HARD_LEFT` | — | s[5] |
 
 The 6× config defines `HAS_HARD_SIDES = 1`, enabling an extra steering term that blends the hard-side sensors for wider corner awareness.
 
@@ -106,8 +106,8 @@ Six VL53L0X Time-of-Flight sensors on I2C (Wire1), using the Adafruit_VL53L0X li
 
 **Initialization sequence:**
 1. All XSHUT pins pulled LOW (sensors held in reset)
-2. Wire1 started at 400 kHz
-3. Each sensor enabled one at a time (XSHUT HIGH), assigned a unique I2C address (0x30–0x35)
+2. Wire1 started at 100 kHz (reduced from 400 kHz for reliability)
+3. Each sensor enabled one at a time (XSHUT HIGH, 50 ms delay), assigned a unique I2C address (0x30–0x35)
 4. Each sensor starts continuous ranging (~33 ms measurement period)
 
 **Reading:**
@@ -116,15 +116,15 @@ Six VL53L0X Time-of-Flight sensors on I2C (Wire1), using the Adafruit_VL53L0X li
 - Out-of-range readings (VL53L0X returns 8190) are treated as invalid → `9999`
 - Values capped at `MAX_SENSOR_RANGE` (2000 = 200 cm)
 
-**Sensor layout:**
+**Sensor layout (mirrored — physical index matches XSHUT pin order):**
 
 ```
-s[0] Hard-Left   (GP6 XSHUT)  — 90° left, ±120 mm lateral
-s[1] Left        (GP7 XSHUT)  — 45° left, ±90 mm
-s[2] Front-Left  (GP8 XSHUT)  —  0° fwd,  +40 mm
-s[3] Front-Right (GP9 XSHUT)  —  0° fwd,  -40 mm
-s[4] Right       (GP14 XSHUT) — 45° right, -90 mm
-s[5] Hard-Right  (GP15 XSHUT) — 90° right, -120 mm
+s[0] Hard-Right  (GP6 XSHUT)  — 90° right, -120 mm lateral
+s[1] Front-Right (GP7 XSHUT)  —  0° fwd,   -40 mm
+s[2] Right       (GP8 XSHUT)  — 45° right,  -90 mm
+s[3] Left        (GP9 XSHUT)  — 45° left,   +90 mm
+s[4] Front-Left  (GP14 XSHUT) —  0° fwd,    +40 mm
+s[5] Hard-Left   (GP15 XSHUT) — 90° left,  +120 mm
 ```
 
 ---
@@ -250,7 +250,7 @@ Actions: ACTIONS → CONFIRM → execute
 Long-press from anywhere → DASHBOARD
 ```
 
-**10 screens:** Dashboard (live sensor bars + speed + battery), Main Menu, Settings Groups, Settings List, Settings Edit (2x font value, encoder adjust), Tests (8 items, motor tests marked [!]), Test Running, Actions (start/stop/save/load/reset), Confirm dialog, Info (FW version, sensors, IMU, battery).
+**10 screens:** Dashboard (live sensor bars + speed + battery), Main Menu, Settings Groups, Settings List, Settings Edit (2x font value, encoder adjust), Tests (8 items, motor tests marked [!]), Test Running, Actions (start/stop/save/load/reset), Confirm dialog, Info (scrollable — FW version, sensors, IMU, battery, WiFi status/SSID/IP).
 
 **Navigation:** turn = scroll, click = select/confirm, hold = back/cancel. Fast rotation = larger parameter steps.
 
@@ -397,6 +397,8 @@ Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Ard
 
 Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **port 23**. Bidirectional transparent bridge: everything the car sends over UART appears on the TCP socket, and vice versa.
 
+**WiFi status reporting:** ESP sends `# Mode:`, `# SSID:`, `# IP:`, `# Status: ready` over UART during boot. The Pico parses these to display WiFi status on the OLED Info screen. If the Pico missed the boot messages, it can query status by sending `#WIFISTATUS` over UART — the ESP replies with the same status lines.
+
 **Built-in web UI** (`web_ui.h` PROGMEM, ~20KB):
 - Live telemetry (4 or 6 sensors auto-detected, speed, steer, IMU, battery voltage)
 - Track map with normal/light/collapsed modes
@@ -431,7 +433,7 @@ ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]
 |---|---|---|
 | ms | ms | `millis()` timestamp |
 | s0–s3 (4-sensor) | cm×10 | Distances: Left, FL, FR, Right |
-| s0–s5 (6-sensor) | cm×10 | Distances: Hard-Left, Left, FL, FR, Right, Hard-Right |
+| s0–s5 (6-sensor) | cm×10 | Distances: Hard-Right, Front-Right, Right, Left, Front-Left, Hard-Left |
 | steer | — | Steering command sent (`diff × coef`) |
 | speed | m/s | Measured wheel speed |
 | target | m/s | Target speed |

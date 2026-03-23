@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). It uses 4× TF-Luna LiDAR sensors for obstacle detection, an optical encoder for speed measurement, an optional MPU-6050 gyro for heading, and a Wemos D1 Mini WiFi bridge for wireless telemetry and remote tuning. A Python web dashboard and 2D simulator complete the stack.
+Umbreon is an autonomous roborace car built on a Raspberry Pi Pico 2 (RP2350). It supports two sensor configs: 4× TF-Luna LiDAR (UART) or 6× VL53L0X ToF (I2C), selected at compile time. It uses an optical encoder for speed measurement, an optional MPU-6050 gyro for heading, an SSD1306 OLED + rotary encoder for on-car menu, and a Wemos D1 Mini WiFi bridge for wireless telemetry and remote tuning. A Python web dashboard and 2D simulator complete the stack.
 
 ## Build & Run Commands
 
@@ -62,7 +62,7 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:
 - **40 ms control loop** in `work()`: read LiDARs → IMU → steering logic → speed logic → PID → telemetry output → stuck/wrong-direction detection
 - `luna_car.h` is the hardware abstraction layer: LiDAR polling (SerialPIO), servo/ESC PWM, PID, tachometer ISR, IMU I2C
 - `tests.h` provides diagnostic routines (included by default; `#define COMPETITION_MODE` for auto-start)
-- `menu.h` is the OLED SSD1306 + rotary encoder menu system (gated by `USE_OLED_MENU`): 10-screen state machine for dashboard, settings editing, tests, and actions without WiFi
+- `menu.h` is the OLED SSD1306 + rotary encoder menu system (gated by `USE_OLED_MENU`): 10-screen state machine for dashboard, settings editing, tests, actions, and scrollable info screen (FW, sensors, IMU, battery, WiFi status/SSID/IP) without WiFi
 - **Start/Stop**: car boots stopped by default; `$START`/`$STOP` control driving; idle telemetry streams sensor data when stopped
 - **Remote tests**: 8 WiFi-accessible tests via `$TEST:<name>` (output `$T:` progress, `$TR:` results, `$TDONE:` completion)
 - All distances are in **cm×10** units (e.g., 1200 = 120.0 cm)
@@ -80,6 +80,7 @@ Pico 2 Firmware ──UART1──▶ Wemos D1 Mini WiFi Bridge ──┬─ TCP:
 - **Port 81**: WebSocket server — real-time bidirectional relay for web dashboard
 - **Port 23**: Raw TCP server — backward compat with Python dashboard / ROS2 bridge
 - Line-buffered protocol-aware relay (UART lines broadcast to both TCP and WebSocket)
+- Responds to `#WIFISTATUS` query from Pico with WiFi mode, SSID, and IP
 - LED status: slow blink (no clients), fast blink (client, no data), solid (data flowing)
 
 ### Dashboard (`dashboard/`)
@@ -122,10 +123,14 @@ Tests auto-stop the car. Send `$STOP` to abort a running test.
 ## Telemetry Format (CSV, 25 Hz)
 
 ```
+# 4× TF-Luna:
 #ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]
+
+# 6× VL53L0X (mirrored order: HR, FR, R, L, FL, HL):
+#ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]
 ```
 
-8 fields without IMU, 10 with IMU. Sensors s0–s3 are in cm×10.
+4-sensor: 8 fields without IMU, 10 with IMU. 6-sensor: 10/12 fields. Sensors are in cm×10.
 
 ## Key Constants
 

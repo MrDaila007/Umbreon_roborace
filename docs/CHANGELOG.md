@@ -8,11 +8,33 @@ All notable changes to the Umbreon Roborace project are documented in this file.
 - Add SSD1306 128x64 OLED display + rotary encoder on-car menu (`menu.h`, gated by `USE_OLED_MENU`)
 - 10-screen state machine: dashboard (live sensor bars, speed, battery), settings editor (27 params with type-aware steps), hardware tests, actions (start/stop/save/load/reset), info
 - OLED shares I2C0 (GP0/GP1) with MPU-6050 IMU — no address conflict (0x3C vs 0x68)
-- Encoder on GP12 (CLK), GP22 (DT), GP19 (SW) — available in both sensor configs
+- Encoder on GP22 (CLK), GP12 (DT), GP19 (SW) — available in both sensor configs
 - Navigation: turn=scroll, click=select, hold=back. Fast rotation = larger steps.
 - Confirm dialog for destructive actions (motor tests, EEPROM save/load/reset)
 - Zero overhead when disabled (`USE_OLED_MENU=0` compiles to no-ops)
+- Info screen is scrollable with encoder — shows FW version, sensors, IMU, battery, WiFi status
 - Libraries: Adafruit SSD1306, Adafruit GFX, EncButton
+
+### VL53L0X Sensor Fixes
+- Fix VL53L0X sensor order to match physical mounting: mirrored layout (HR, FR, R, L, FL, HL)
+- Reduce I2C clock from 400 kHz to 100 kHz for reliable VL53L0X communication
+- Increase XSHUT boot delay from 10 ms to 50 ms for sensor initialization
+- Fix sensor_test error message to show actual I2C pins (was hardcoded GP20/GP21)
+- Update sensor labels in `tests.h` to match mirrored order
+- Update 6-sensor geometry in ESP web UI (`web_ui.h`) and Python dashboard (`car_config.py`)
+
+### OLED Display Fixes
+- Fix dashboard sensor bars overlapping value text (bar width reduced, value at fixed x-offset)
+- Fix 6-sensor dashboard overlapping IMU line (reduced bar height/spacing)
+- Fix edit screen and test running screen hint text clipping bottom of display
+- Reverse encoder direction (swap CLK/DT pins) to match expected rotation
+
+### WiFi Status on OLED
+- Pico parses ESP boot messages (`# Mode:`, `# SSID:`, `# IP:`, `# Status:`) from UART
+- ESP responds to `#WIFISTATUS` query with current WiFi mode, SSID, and IP
+- Pico sends `#WIFISTATUS` after UART init to catch ESP status even if boot messages were missed
+- ESP now sends `# Mode: STA` and `# SSID:` in STA mode (previously only in AP mode)
+- Info screen shows WiFi mode (AP/STA), network name, and IP address
 
 ### Safety (P0)
 - Add 2s timeout to busy-wait loops in `go_back`/`go_back_long` to prevent infinite hangs

@@ -187,6 +187,8 @@ void setup() {
         if (WiFi.status() == WL_CONNECTED) {
             wifi_is_sta = true;
             Serial.println(" ok");
+            Serial.println("# Mode:  STA");
+            Serial.print("# SSID:  "); Serial.println(STA_SSID);
             Serial.print("# IP:    "); Serial.println(WiFi.localIP());
         }
     } else {

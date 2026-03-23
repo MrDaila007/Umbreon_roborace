@@ -115,6 +115,14 @@ float manual_speed = 0.0f;
 
 Car car;
 
+// ─── ESP WiFi status (parsed from # lines on UART1) ────────────────────────
+#if USE_WIFI_DEBUG
+char esp_wifi_ssid[24] = "";    // AP SSID or STA network name
+char esp_wifi_ip[16]   = "";    // IP address
+bool esp_wifi_is_ap    = true;  // true = AP mode, false = STA mode
+bool esp_wifi_ready    = false; // true once "# Status: ready" received
+#endif
+
 #include "tests.h"              // hardware tests — needs cfg_* globals and Car defined above
 #include "menu.h"               // OLED menu — needs cfg_* globals, Car, test functions
 
@@ -881,6 +889,31 @@ static void process_commands() {
                 cmd_buf[cmd_len] = '\0';
                 if (cmd_buf[0] == '$') {
                     dispatch_command(cmd_buf);
+                } else if (cmd_buf[0] == '#') {
+                    // Parse ESP status lines: "# IP: ...", "# SSID: ...", "# Mode: ..."
+                    if (strncmp(cmd_buf, "# IP:", 5) == 0) {
+                        const char* v = cmd_buf + 5;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ip, v, sizeof(esp_wifi_ip) - 1);
+                        esp_wifi_ip[sizeof(esp_wifi_ip) - 1] = '\0';
+                    } else if (strncmp(cmd_buf, "# SSID:", 7) == 0) {
+                        const char* v = cmd_buf + 7;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ssid, v, sizeof(esp_wifi_ssid) - 1);
+                        esp_wifi_ssid[sizeof(esp_wifi_ssid) - 1] = '\0';
+                    } else if (strncmp(cmd_buf, "# STA:", 6) == 0) {
+                        const char* v = cmd_buf + 6;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ssid, v, sizeof(esp_wifi_ssid) - 1);
+                        esp_wifi_ssid[sizeof(esp_wifi_ssid) - 1] = '\0';
+                        esp_wifi_is_ap = false;
+                    } else if (strncmp(cmd_buf, "# Mode:", 7) == 0) {
+                        const char* v = cmd_buf + 7;
+                        while (*v == ' ') v++;
+                        esp_wifi_is_ap = (strncmp(v, "AP", 2) == 0);
+                    } else if (strncmp(cmd_buf, "# Status: ready", 15) == 0) {
+                        esp_wifi_ready = true;
+                    }
                 }
                 cmd_len = 0;
             }

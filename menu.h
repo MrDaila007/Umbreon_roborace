@@ -19,8 +19,8 @@
 #include <EncButton.h>
 
 // ─── Pin definitions ─────────────────────────────────────────────────────────
-#define ENC_CLK_PIN   12
-#define ENC_DT_PIN    22
+#define ENC_CLK_PIN   22
+#define ENC_DT_PIN    12
 #define ENC_SW_PIN    19
 
 // ─── Display ─────────────────────────────────────────────────────────────────
@@ -494,42 +494,68 @@ static void _draw_info() {
     _oled.print("Info");
     _oled.setTextColor(SSD1306_WHITE);
 
-    _oled.setCursor(2, 14);
+    _oled.setCursor(2, 12);
     _oled.print("FW: v");
     _oled.print(FW_VERSION);
 
-    _oled.setCursor(2, 24);
-    _oled.print("Sensors: ");
+    _oled.setCursor(2, 21);
+    _oled.print("Sns: ");
     _oled.print(SENSOR_COUNT);
 #if SENSOR_CONFIG == SENSOR_4X_LUNA
-    _oled.print(" (Luna)");
+    _oled.print(" Luna");
 #elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
-    _oled.print(" (VL53)");
+    _oled.print(" VL53");
 #endif
-
-    _oled.setCursor(2, 34);
-    _oled.print("IMU: ");
+    _oled.print("  IMU:");
 #if USE_IMU
-    _oled.print(car.imu_ok ? "OK" : "FAIL");
+    _oled.print(car.imu_ok ? "OK" : "--");
 #else
-    _oled.print("Disabled");
+    _oled.print("--");
 #endif
 
-    _oled.setCursor(2, 44);
+    _oled.setCursor(2, 30);
     _oled.print("Bat: ");
     if (cfg_bat_enabled) {
         char vbuf[8];
         snprintf(vbuf, sizeof(vbuf), "%.1fV", (double)car.bat_voltage);
         _oled.print(vbuf);
     } else {
-        _oled.print("Disabled");
+        _oled.print("Off");
+    }
+    _oled.print("  Loop:");
+    _oled.print(cfg_loop_ms);
+    _oled.print("ms");
+
+    // WiFi status from ESP
+    _oled.drawFastHLine(0, 40, SCREEN_W, SSD1306_WHITE);
+#if USE_WIFI_DEBUG
+    extern bool esp_wifi_ready;
+    extern bool esp_wifi_is_ap;
+    extern char esp_wifi_ssid[];
+    extern char esp_wifi_ip[];
+
+    _oled.setCursor(2, 43);
+    if (!esp_wifi_ready) {
+        _oled.print("WiFi: waiting...");
+    } else {
+        _oled.print("WiFi: ");
+        _oled.print(esp_wifi_is_ap ? "AP" : "STA");
     }
 
-    _oled.setCursor(2, 54);
-    _oled.print("Loop: ");
-    _oled.print(cfg_loop_ms);
-    _oled.print("ms  Enc: ");
-    _oled.print(cfg_encoder_holes);
+    _oled.setCursor(2, 52);
+    if (esp_wifi_ssid[0]) {
+        _oled.print(esp_wifi_ssid);
+    }
+    if (esp_wifi_ip[0]) {
+        // Right-align IP
+        int ip_w = strlen(esp_wifi_ip) * 6;
+        _oled.setCursor(SCREEN_W - ip_w, 52);
+        _oled.print(esp_wifi_ip);
+    }
+#else
+    _oled.setCursor(2, 43);
+    _oled.print("WiFi: Disabled");
+#endif
 }
 
 // ─── Navigation logic ────────────────────────────────────────────────────────

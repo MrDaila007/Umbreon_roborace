@@ -103,6 +103,18 @@ button:active{background:#475569}
 </label>
 <span class="fs" id="mP">0, 0</span>
 </div>
+<div style="display:flex;gap:4px;margin-top:6px;align-items:center;flex-wrap:wrap">
+<span class="fs" style="font-weight:600">Track:</span>
+<button onclick="tL('LEARN')" style="padding:4px 8px;font-size:11px" class="bg0">Record</button>
+<button onclick="tL('STOP')" style="padding:4px 8px;font-size:11px" class="bn">Stop</button>
+<button onclick="tL('SAVE')" style="padding:4px 8px;font-size:11px">Save</button>
+<button onclick="tL('LOAD')" style="padding:4px 8px;font-size:11px">Load</button>
+<button onclick="tL('CLR')" style="padding:4px 8px;font-size:11px">Clear</button>
+<button onclick="tL('RACE')" style="padding:4px 8px;font-size:11px" class="bb">Race</button>
+<button onclick="tL('STATUS')" style="padding:4px 8px;font-size:11px">?</button>
+<button onclick="tL('GET')" style="padding:4px 8px;font-size:11px">Get</button>
+</div>
+<div class="fs" id="tS" style="margin-top:3px;font-variant-numeric:tabular-nums">IDLE | 0 pts</div>
 </div>
 </section>
 
@@ -297,6 +309,7 @@ else if(l.indexOf('$T:')===0)aL(l);
 else if(l.indexOf('$TR:')===0)aL(l);
 else if(l.indexOf('$TDONE:')===0){aL(l);tt('Test done','inf')}
 else if(l.indexOf('$BAT:')===0){var bv=parseFloat(l.slice(5));if(bv>0.5){Q('bV').classList.remove('hid');Q('bV').textContent=bv.toFixed(1)+'V';Q('bV').style.color=bv<6.2?'#ef4444':bv<7.0?'#f59e0b':'#22c55e'}}
+else if(l.indexOf('$TRK:')===0)tP(l.slice(5))
 }else{
 var p=l.split(',');
 // Dynamic field count: ms + sn sensors + steer + speed + target [+ yaw + heading]
@@ -521,6 +534,8 @@ Q('mP').textContent=mx.toFixed(2)+', '+my.toFixed(2);
 }
 
 function mR(){mx=0;my=0;mh=0;mp=0;mo=0;mn=0;tr=[];wl=[];for(var i=0;i<sn;i++)wl.push([]);mD()}
+function tL(c){S('$TRK:'+c)}
+function tP(d){if(d.indexOf('STS,')===0){var m={};d.slice(4).split(',').forEach(function(kv){var p=kv.split('=');if(p.length===2)m[p[0]]=p[1]});var dm=(parseInt(m.dist||0)/100).toFixed(1);var t=(m.mode||'?')+' | '+(m.pts||0)+'/'+(m.max||0)+' pts | '+dm+'m';if(m.odo)t+=' | odo:'+(parseInt(m.odo)/100).toFixed(1)+'m';Q('tS').textContent=t;Q('tS').style.color=m.mode==='LEARN'?'#a3e635':m.mode==='RACE'?'#60a5fa':'#64748b'}else{aL('$TRK:'+d);if(d==='DONE')tt('Track data','inf')}}
 function mZ(f){ms*=f;ms=Math.max(10,Math.min(3000,ms));mD()}
 
 (function(){

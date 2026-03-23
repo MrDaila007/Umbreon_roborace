@@ -32,6 +32,7 @@
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
 #define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
 #define USE_OLED_MENU   1       // 1 = enable SSD1306 OLED + rotary encoder menu, 0 = disable
+#define USE_TRACK_LEARN 1       // 1 = enable track profile learning & race mode, 0 = disable
 
 #if USE_WIFI_DEBUG
 #define DEBUG_TX_PIN  16         // GP16 = UART1 TX → D1 Mini RX
@@ -44,6 +45,9 @@
 #include <EEPROM.h>
 #include "eeprom_settings.h"    // CarSettings struct — must be last so prototypes see it
 #include "core1.h"              // dual-core: mutex, FIFO messages, sensor snapshot
+#if USE_TRACK_LEARN
+#include "track_learn.h"        // track profile learning & race mode
+#endif
 
 // ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
@@ -822,6 +826,10 @@ static void cmd_stop() {
     manual_speed = 0.0f;
     car.write_speed(0);
     car.write_steer(0);
+#if USE_TRACK_LEARN
+    trk_stop_learn();
+    trk_stop_race();
+#endif
     Serial1.println("$ACK");
     Serial1.println("$STS:STOP");
 }
@@ -898,6 +906,9 @@ static void dispatch_command(const char* line) {
         car.write_steer(0); car.write_speed(0);
         Serial1.println("$ACK");
     }
+#if USE_TRACK_LEARN
+    else if (strncmp(line, "$TRK:", 5) == 0) trk_dispatch(line + 5, Serial1);
+#endif
     // Unknown commands silently ignored
 }
 
@@ -1125,6 +1136,16 @@ void work() {
             coef = cfg_coe_blocked; spd = cfg_spd_blocked;  break;
     }
 
+#if USE_TRACK_LEARN
+    // Race mode: override speed with learned profile (anticipatory braking)
+    if (trk_mode == TRK_RACE) {
+        float rec = trk_recommend_speed(0.5f);  // look 50 cm ahead
+        if (rec > 0) spd = rec;
+    }
+    // Learn mode: record current steer/speed at distance intervals
+    trk_learn_tick((int)(diff * coef), spd);
+#endif
+
     car.write_steer((int)(diff * coef));
     car.write_speed_ms(spd);
     car.pid_control_motor();
@@ -1226,8 +1247,11 @@ void setup() {
     Serial.print("Umbreon FW v"); Serial.println(FW_VERSION);
 
     // Try loading saved settings from EEPROM (falls back to compile-time defaults)
-    EEPROM.begin(256);
+    EEPROM.begin(4096);  // 256 for CarSettings + up to 3740 for track profile
     load_settings();
+#if USE_TRACK_LEARN
+    trk_load();  // try loading saved track (silent fail if none)
+#endif
 
     car.init();
 #if USE_IMU

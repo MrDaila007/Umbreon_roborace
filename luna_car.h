@@ -306,6 +306,9 @@ int* Car::read_sensors() {
     for (int i = 0; i < SENSOR_COUNT; i++) {
         values[i] = _lidars[i].hasReading ? (int)_lidars[i].dist_cm * 10 : 9999;
     }
+    // Update snapshot for Core 1 (OLED dashboard reads this)
+    extern volatile int sensor_snapshot[];
+    for (int i = 0; i < SENSOR_COUNT; i++) sensor_snapshot[i] = values[i];
     return values;
 }
 #endif  // SENSOR_4X_LUNA
@@ -336,6 +339,9 @@ int* Car::read_sensors() {
             values[i] = 9999;
         }
     }
+    // Update snapshot for Core 1 (OLED dashboard reads this)
+    extern volatile int sensor_snapshot[];
+    for (int i = 0; i < SENSOR_COUNT; i++) sensor_snapshot[i] = values[i];
     return values;
 }
 #endif  // SENSOR_6X_VL53L0X

@@ -43,6 +43,7 @@
 #include "luna_car.h"
 #include <EEPROM.h>
 #include "eeprom_settings.h"    // CarSettings struct — must be last so prototypes see it
+#include "core1.h"              // dual-core: mutex, FIFO messages, sensor snapshot
 
 // ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
@@ -101,14 +102,14 @@ float cfg_bat_low        = 6.0f;   // low voltage cutoff (V) — stop car if bel
 // ─── Start/Stop control ────────────────────────────────────────────────────
 // #define COMPETITION_MODE     // uncomment to start driving immediately
 #ifdef COMPETITION_MODE
-bool car_running = true;
+volatile bool car_running = true;
 #else
-bool car_running = false;
+volatile bool car_running = false;
 #endif
 
 // ─── Manual drive mode ($DRV command) ─────────────────────────────────────
-bool manual_mode = false;
-bool drv_enabled = false;       // $DRVEN/$DRVOFF — allows $DRV without $START
+volatile bool manual_mode = false;
+volatile bool drv_enabled = false;       // $DRVEN/$DRVOFF — allows $DRV without $START
 unsigned long last_drv_ms = 0;
 int manual_steer = 0;
 float manual_speed = 0.0f;
@@ -363,8 +364,8 @@ static void cmd_load() {
     }
 }
 
-static void cmd_rst() {
-    // Reset to compile-time defaults (sensor-config-specific thresholds)
+// Reset all cfg_* to compile-time defaults (reusable from WiFi cmd and OLED menu)
+static void cmd_rst_internal() {
     cfg_front_obstacle_dist = DEFAULT_FOD;
     cfg_side_open_dist      = DEFAULT_SOD;
     cfg_all_close_dist      = DEFAULT_ACD;
@@ -394,12 +395,17 @@ static void cmd_rst() {
     cfg_bat_enabled    = false;
     cfg_bat_multiplier = 2.8f;
     cfg_bat_low        = 6.0f;
+}
+
+static void cmd_rst() {
+    cmd_rst_internal();
     Serial1.println("$ACK");
 }
 
 // ─── WiFi remote tests ──────────────────────────────────────────────────
 
 static bool wifi_check_abort() {
+    rp2040.wdt_reset();  // keep watchdog fed during long-running tests
     if (Serial1.available() > 0 && Serial1.peek() == '$')
         return true;
     return false;
@@ -824,7 +830,8 @@ static void cmd_status() {
     Serial1.println(car_running ? "$STS:RUN" : "$STS:STOP");
 }
 
-static void cmd_test(const char* name) {
+// Run test by index (0–7). Reusable from WiFi cmd_test() and OLED menu FIFO.
+static void cmd_test_by_index(int idx) {
     // Auto-stop car before running any test
     if (car_running) {
         car_running = false;
@@ -832,14 +839,27 @@ static void cmd_test(const char* name) {
         car.write_steer(0);
     }
 
-    if      (strcmp(name, "lidar")    == 0) wifi_test_lidar();
-    else if (strcmp(name, "servo")    == 0) wifi_test_servo();
-    else if (strcmp(name, "taho")     == 0) wifi_test_taho();
-    else if (strcmp(name, "esc")      == 0) wifi_test_esc();
-    else if (strcmp(name, "speed")    == 0) wifi_test_speed();
-    else if (strcmp(name, "autotune") == 0) wifi_test_autotune();
-    else if (strcmp(name, "reactive") == 0) wifi_test_reactive();
-    else if (strcmp(name, "cal")      == 0) { cfg_calibrated = false; run_calibration(); }
+    switch (idx) {
+        case 0: wifi_test_lidar();    break;
+        case 1: wifi_test_servo();    break;
+        case 2: wifi_test_taho();     break;
+        case 3: wifi_test_esc();      break;
+        case 4: wifi_test_speed();    break;
+        case 5: wifi_test_autotune(); break;
+        case 6: wifi_test_reactive(); break;
+        case 7: cfg_calibrated = false; run_calibration(); break;
+    }
+}
+
+static void cmd_test(const char* name) {
+    if      (strcmp(name, "lidar")    == 0) cmd_test_by_index(0);
+    else if (strcmp(name, "servo")    == 0) cmd_test_by_index(1);
+    else if (strcmp(name, "taho")     == 0) cmd_test_by_index(2);
+    else if (strcmp(name, "esc")      == 0) cmd_test_by_index(3);
+    else if (strcmp(name, "speed")    == 0) cmd_test_by_index(4);
+    else if (strcmp(name, "autotune") == 0) cmd_test_by_index(5);
+    else if (strcmp(name, "reactive") == 0) cmd_test_by_index(6);
+    else if (strcmp(name, "cal")      == 0) cmd_test_by_index(7);
     else {
         Serial1.print("$NAK:unknown_test:");
         Serial1.println(name);
@@ -925,7 +945,9 @@ static void process_commands() {
 static void send_idle_telemetry() {
     car.poll_lidars();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_update();
+    mutex_exit(&i2c0_mutex);
 #endif
     int* s = car.read_sensors();
     Serial1.print(millis());              Serial1.print(',');
@@ -943,6 +965,53 @@ static void send_idle_telemetry() {
 
 #endif  // USE_WIFI_DEBUG
 
+// ─── Core 1 FIFO message handler (called from Core 0 loop) ─────────────────
+static void process_core1_message(uint32_t msg) {
+    switch (msg) {
+        case MSG_STOP_CAR:
+            car_running = false;
+            drv_enabled = false;
+            manual_mode = false;
+            car.write_speed(0);
+            car.write_steer(0);
+#if USE_WIFI_DEBUG
+            Serial1.println("$STS:STOP");
+#endif
+            break;
+        case MSG_START_CAR:
+            car.pid_integral   = 0;
+            car.pid_prev_error = 0;
+            car.pid_filtered   = 0;
+            car.pid_prev_ms    = 0;
+#if USE_IMU
+            car.reset_heading();
+#endif
+            car_running = true;
+#if USE_WIFI_DEBUG
+            Serial1.println("$STS:RUN");
+#endif
+            break;
+        case MSG_SAVE_EEPROM:
+            save_settings();
+            break;
+        case MSG_LOAD_EEPROM:
+            load_settings();
+            break;
+        case MSG_RESET_DEFAULTS:
+            cmd_rst_internal();
+            break;
+        default:
+            // Test requests: MSG_RUN_TEST_BASE + index (0–7)
+            if (msg >= MSG_RUN_TEST_BASE && msg < MSG_RUN_TEST_BASE + 8) {
+#if USE_WIFI_DEBUG
+                cmd_test_by_index((int)(msg - MSG_RUN_TEST_BASE));
+#endif
+                core1_test_active = false;  // signal Core 1 menu: test finished
+            }
+            break;
+    }
+}
+
 // ─── ESC calibration ─────────────────────────────────────────────────────────
 // Standard ESC calibration: max throttle → ESC learns high endpoint,
 // min throttle → ESC learns low endpoint, then neutral.
@@ -952,19 +1021,19 @@ void run_calibration() {
     Serial1.println("$T:CAL,phase=esc_max");
 #endif
     car.motor_esc.writeMicroseconds(2000);  // ESC max signal
-    delay(3000);                            // wait for ESC to register max (beeps)
+    delay(3000); rp2040.wdt_reset();       // wait for ESC to register max (beeps)
 
 #if USE_WIFI_DEBUG
     Serial1.println("$T:CAL,phase=esc_min");
 #endif
     car.motor_esc.writeMicroseconds(1000);  // ESC min signal
-    delay(3000);                            // wait for ESC to register min (beeps)
+    delay(3000); rp2040.wdt_reset();       // wait for ESC to register min (beeps)
 
 #if USE_WIFI_DEBUG
     Serial1.println("$T:CAL,phase=esc_neutral");
 #endif
     car.motor_esc.writeMicroseconds(NEUTRAL_SPEED);  // neutral (1500µs)
-    delay(1000);
+    delay(1000); rp2040.wdt_reset();
 
     // Mark as calibrated and persist
     cfg_calibrated = true;
@@ -980,26 +1049,26 @@ void run_calibration() {
 void go_back() {
     car.write_speed(0);
     { unsigned long _deadline = millis() + 2000;
-      while (get_speed() > 0.1f && millis() < _deadline) {} }
+      while (get_speed() > 0.1f && millis() < _deadline) { rp2040.wdt_reset(); } }
     car.write_speed(-150);
-    delay(200);
+    delay(200); rp2040.wdt_reset();
     car.write_speed(0);
     delay(80);
     car.write_speed(-150);
-    delay(700);
+    delay(700); rp2040.wdt_reset();
     car.write_speed(0);
 }
 
 void go_back_long() {
     car.write_speed(0);
     { unsigned long _deadline = millis() + 2000;
-      while (get_speed() > 0.1f && millis() < _deadline) {} }
+      while (get_speed() > 0.1f && millis() < _deadline) { rp2040.wdt_reset(); } }
     car.write_speed(-150);
-    delay(1000);
+    delay(1000); rp2040.wdt_reset();
     car.write_speed(0);
     delay(80);
     car.write_speed(-150);
-    delay(1800);
+    delay(1800); rp2040.wdt_reset();
     car.write_speed(0);
 }
 
@@ -1008,7 +1077,9 @@ void work() {
     // Bring sensor data up to date before reading
     car.poll_lidars();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_update();
+    mutex_exit(&i2c0_mutex);
 #endif
     int* s = car.read_sensors();
 
@@ -1134,7 +1205,9 @@ void work() {
         while ((millis() - strt) < 900) {
             car.poll_lidars();
 #if USE_IMU
+            mutex_enter_blocking(&i2c0_mutex);
             car.imu_update();
+            mutex_exit(&i2c0_mutex);
 #endif
             car.pid_control_motor();
         }
@@ -1158,10 +1231,12 @@ void setup() {
 
     car.init();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_init();
     car.imu_calibrate();  // sample gyro bias while stationary (~1s)
+    mutex_exit(&i2c0_mutex);
 #endif
-    menu_init();
+    // menu_init() moved to setup1() on Core 1
 
 #if USE_WIFI_DEBUG
     Serial1.setTX(DEBUG_TX_PIN);
@@ -1195,7 +1270,7 @@ void setup() {
 
 void loop() {
     rp2040.wdt_reset();  // feed hardware watchdog every loop iteration
-    menu_tick();         // poll encoder + redraw OLED (~5µs poll, ~4ms when rendering)
+    // menu_tick() moved to loop1() on Core 1
 
     // Drain sensor data even between control ticks
     car.poll_lidars();
@@ -1205,6 +1280,12 @@ void loop() {
     // Process incoming dashboard commands
     process_commands();
 #endif
+
+    // Process FIFO messages from Core 1 (OLED menu actions)
+    uint32_t fifo_msg;
+    while (rp2040.fifo.pop_nb(&fifo_msg)) {
+        process_core1_message(fifo_msg);
+    }
 
     unsigned long now = millis();
     if (now >= next_loop) {
@@ -1221,7 +1302,9 @@ void loop() {
             // Manual drive mode — apply $DRV commands directly
             car.poll_lidars();
 #if USE_IMU
+            mutex_enter_blocking(&i2c0_mutex);
             car.imu_update();
+            mutex_exit(&i2c0_mutex);
 #endif
             int* s = car.read_sensors();
             car.write_steer(manual_steer);
@@ -1269,4 +1352,22 @@ void loop() {
             bat_low_since = 0;  // voltage OK — reset timer
         }
     }
+}
+
+// ─── Core 1: OLED menu ─────────────────────────────────────────────────────
+// Core 1 runs the OLED display and rotary encoder independently of the
+// control loop. Communication with Core 0 is via rp2040.fifo messages.
+// I2C0 bus (shared with IMU) is protected by i2c0_mutex.
+
+void setup1() {
+    // Wait for Core 0 to finish setup() (IMU cal ~1s, ESC cal/arm ~3.7s, WiFi init)
+    delay(6000);
+
+    mutex_enter_blocking(&i2c0_mutex);
+    menu_init();
+    mutex_exit(&i2c0_mutex);
+}
+
+void loop1() {
+    menu_tick_core1();
 }

@@ -248,8 +248,11 @@ static void _clamp_scroll(int& sel, int& scroll, int total, int visible) {
 // ─── Screen drawing ──────────────────────────────────────────────────────────
 
 // Forward declarations
-extern Car   car;
-extern bool  car_running;
+extern Car            car;
+extern volatile bool  car_running;
+extern mutex_t        i2c0_mutex;
+extern volatile bool  core1_test_active;
+extern volatile int   sensor_snapshot[];
 
 static void _draw_dashboard() {
     // Line 0: status bar
@@ -276,8 +279,9 @@ static void _draw_dashboard() {
     // Separator line
     _oled.drawFastHLine(0, 10, SCREEN_W, SSD1306_WHITE);
 
-    // Sensor bars (visual representation)
-    int* s = car.read_sensors();
+    // Sensor bars (visual representation) — read from snapshot (updated by Core 0)
+    int s[SENSOR_COUNT];
+    for (int i = 0; i < SENSOR_COUNT; i++) s[i] = sensor_snapshot[i];
     const int bar_y = 14;
     const int bar_h = 5;
     const int bar_spacing = 7;
@@ -599,115 +603,25 @@ static void _go_back() {
     _scroll = 0;
 }
 
-// Execute a confirmed action
-extern bool save_settings();
-extern bool load_settings();
-
+// Execute a confirmed action — sends FIFO message to Core 0
+// (Core 1 must not call Servo/ESC/EEPROM directly)
 static void _exec_action(ActionId id) {
     switch (id) {
-        case ACT_START:
-            car_running = true;
-            break;
-        case ACT_STOP:
-            car_running = false;
-            car.write_speed(0);
-            car.write_steer(0);
-            break;
-        case ACT_SAVE:
-            save_settings();
-            break;
-        case ACT_LOAD:
-            load_settings();
-            break;
-        case ACT_RESET: {
-            // Reuse the cmd_rst logic — reset all cfg_* to defaults
-            cfg_front_obstacle_dist = DEFAULT_FOD;
-            cfg_side_open_dist      = DEFAULT_SOD;
-            cfg_all_close_dist      = DEFAULT_ACD;
-            cfg_close_front_dist    = DEFAULT_CFD;
-            cfg_pid_kp   = 60.0f;
-            cfg_pid_ki   = 40.0f;
-            cfg_pid_kd   = 6.0f;
-            cfg_min_speed   = 1540;
-            cfg_max_speed   = 1700;
-            cfg_min_bspeed  = 1460;
-            cfg_min_point     = 40;
-            cfg_max_point     = 140;
-            cfg_neutral_point = 90;
-            cfg_encoder_holes = 62;
-            cfg_wheel_diam_m  = 0.060f;
-            cfg_loop_ms       = 40;
-            cfg_spd_clear     = 2.7f;
-            cfg_spd_blocked   = 0.8f;
-            cfg_coe_clear     = 0.3f;
-            cfg_coe_blocked   = 0.7f;
-            cfg_wrong_dir_deg = 120.0f;
-            cfg_race_cw       = true;
-            cfg_stuck_thresh  = 25;
-            cfg_imu_rotate    = true;
-            cfg_servo_reverse = false;
-            cfg_calibrated    = false;
-            cfg_bat_enabled    = false;
-            cfg_bat_multiplier = 2.8f;
-            cfg_bat_low        = 6.0f;
-            break;
-        }
+        case ACT_START: rp2040.fifo.push(MSG_START_CAR);      break;
+        case ACT_STOP:  rp2040.fifo.push(MSG_STOP_CAR);       break;
+        case ACT_SAVE:  rp2040.fifo.push(MSG_SAVE_EEPROM);    break;
+        case ACT_LOAD:  rp2040.fifo.push(MSG_LOAD_EEPROM);    break;
+        case ACT_RESET: rp2040.fifo.push(MSG_RESET_DEFAULTS); break;
     }
 }
 
-// Run a test via WiFi test functions (defined in .ino) or Serial test functions (tests.h)
-extern void run_calibration();
-
-#if USE_WIFI_DEBUG
-extern void wifi_test_lidar();
-extern void wifi_test_servo();
-extern void wifi_test_taho();
-extern void wifi_test_esc();
-extern void wifi_test_speed();
-extern void wifi_test_autotune();
-extern void wifi_test_reactive();
-#endif
-
+// Run a test — sends FIFO message to Core 0 which executes the test.
+// Core 1 shows SCR_TEST_RUNNING until core1_test_active becomes false.
 static void _run_test(int idx) {
     _test_idx = idx;
     _go_screen(SCR_TEST_RUNNING);
-
-    // Auto-stop car before test
-    if (car_running) {
-        car_running = false;
-        car.write_speed(0);
-        car.write_steer(0);
-    }
-
-#if USE_WIFI_DEBUG
-    switch (idx) {
-        case 0: wifi_test_lidar();    break;
-        case 1: wifi_test_servo();    break;
-        case 2: wifi_test_taho();     break;
-        case 3: wifi_test_esc();      break;
-        case 4: wifi_test_speed();    break;
-        case 5: wifi_test_autotune(); break;
-        case 6: wifi_test_reactive(); break;
-        case 7: cfg_calibrated = false; run_calibration(); break;
-    }
-#else
-    // Without WiFi, use Serial-based tests from tests.h
-    switch (idx) {
-        case 0: test_lidar(car, 5000);   break;
-        case 1: test_servo(car);          break;
-        case 2: test_taho(car, 5000);     break;
-        case 3: test_esc(car);            break;
-        case 4: test_speed_hold(car);     break;
-        case 5: test_autotune(car);       break;
-        case 6: test_reactive(car);       break;
-        case 7: cfg_calibrated = false; run_calibration(); break;
-    }
-#endif
-
-    // Test finished — go back to tests list
-    _scr = SCR_TESTS;
-    _sel = idx;
-    _scroll = 0;
+    core1_test_active = true;
+    rp2040.fifo.push(MSG_RUN_TEST_BASE + (uint32_t)idx);
 }
 
 // ─── Input handling ──────────────────────────────────────────────────────────
@@ -815,11 +729,15 @@ static void _handle_input() {
             break;
 
         case SCR_TEST_RUNNING:
-            // Click aborts (the test functions check Serial, not encoder,
-            // but we go back to menu on click)
+            // Auto-return when Core 0 finishes the test
+            if (!core1_test_active) {
+                _scr = SCR_TESTS;
+                _sel = _test_idx;
+                _scroll = 0;
+            }
+            // Click sends abort request (Core 0 test checks wifi_check_abort)
             if (click) {
-                car.write_speed(0);
-                car.write_steer(0);
+                rp2040.fifo.push(MSG_STOP_CAR);
                 _scr = SCR_TESTS;
             }
             break;
@@ -867,7 +785,8 @@ static void _handle_input() {
 
 // ─── Redraw ──────────────────────────────────────────────────────────────────
 
-static void _draw_screen() {
+// Build framebuffer in RAM (no I2C — only buffer operations)
+static void _draw_screen_to_buffer() {
     _oled.clearDisplay();
     _oled.setTextSize(1);
     _oled.setTextColor(SSD1306_WHITE);
@@ -905,7 +824,11 @@ static void _draw_screen() {
             _draw_info();
             break;
     }
+}
 
+// Legacy single-core draw (buffer + I2C transfer together)
+static void _draw_screen() {
+    _draw_screen_to_buffer();
     _oled.display();
 }
 
@@ -954,10 +877,26 @@ void menu_tick() {
     }
 }
 
+// Core 1 version: builds framebuffer without mutex, then acquires i2c0_mutex
+// only for the I2C transfer (~4ms). This minimizes contention with Core 0 IMU reads.
+void menu_tick_core1() {
+    _handle_input();   // GPIO only (rotary encoder) — no I2C, no mutex needed
+
+    unsigned long now = millis();
+    if (now - _menu_last_draw >= MENU_DRAW_INTERVAL) {
+        _menu_last_draw = now;
+        _draw_screen_to_buffer();            // RAM framebuffer ops only
+        mutex_enter_blocking(&i2c0_mutex);
+        _oled.display();                     // I2C transfer to SSD1306
+        mutex_exit(&i2c0_mutex);
+    }
+}
+
 #else  // USE_OLED_MENU == 0
 
 // No-op stubs when menu is disabled
 inline void menu_init() {}
 inline void menu_tick() {}
+inline void menu_tick_core1() {}
 
 #endif  // USE_OLED_MENU

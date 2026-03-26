@@ -71,7 +71,9 @@ jobs:
       - name: Install reviewdog and ruff
         run: |
           pip install ruff
-          curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh | sh -s -- -b /usr/local/bin
+          mkdir -p "$HOME/.local/bin"
+          curl -sfL https://raw.githubusercontent.com/reviewdog/reviewdog/master/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Ruff review (Python)
         env:

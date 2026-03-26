@@ -285,4 +285,4 @@ On Windows, use `make.bat` (same targets).
 
 ## CI
 
-Self-hosted GitHub Actions — [`docs/self-hosted-ci.md`](docs/self-hosted-ci.md) (**пошаговый сетап нового runner’а** под этот репозиторий — в том же файле). Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Облачный вариант (бекап): [`docs/ci-backup/ci.cloud.yml`](docs/ci-backup/ci.cloud.yml).
+Self-hosted GitHub Actions — [`docs/self-hosted-ci.md`](docs/self-hosted-ci.md) (**пошаговый сетап нового runner’а** под этот репозиторий — в том же файле). Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Облачный вариант (бекап): [`docs/ci-backup/ci.cloud.yml`](docs/ci-backup/ci.cloud.yml). После job **firmware-build** в **Actions** публикуется артефакт **`firmware-pico2`** (сборка Pico 2: `.uf2` и др. в `build/`).

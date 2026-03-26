@@ -1,6 +1,6 @@
 # Self-hosted CI (Umbreon_roborace)
 
-Активный workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — все job’ы на **`runs-on: [self-hosted, linux, embedded]`**.
+Активный workflow: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — все job’ы на **`runs-on: [self-hosted, linux, embedded]`**. После успешного **firmware-build** артефакт **`firmware-pico2`** (каталог **`build/`**: `.uf2`, `.elf` и др.) доступен на вкладке **Actions** → выбранный run → **Artifacts**.
 
 Резервная копия варианта с **GitHub-hosted** (`ubuntu-latest`): [`docs/ci-backup/ci.cloud.yml`](ci-backup/ci.cloud.yml).
 

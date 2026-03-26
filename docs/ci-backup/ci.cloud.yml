@@ -129,7 +129,14 @@ jobs:
           arduino-cli lib install "EncButton"
 
       - name: Compile firmware
-        run: arduino-cli compile -b rp2040:rp2040:rpipico2 .
+        run: arduino-cli compile -b rp2040:rp2040:rpipico2 . --output-dir build
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-pico2
+          path: build/
+          if-no-files-found: warn
 
   # ── Python lint ───────────────────────────────────────────────────
   python-lint:

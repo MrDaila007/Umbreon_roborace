@@ -161,6 +161,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install Tk for matplotlib (plots.py)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends python3-tk
+
       - name: Install dependencies
         run: pip install -r dashboard/requirements.txt
 

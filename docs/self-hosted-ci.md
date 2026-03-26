@@ -24,7 +24,7 @@
 |------------|--------|
 | **Labels:** `self-hosted`, `linux`, `embedded` | Совпадают с `runs-on` в `ci.yml` (дополнительный `x64` не мешает). |
 | **Docker** | Job **ros2-build** (Buildx + образ ROS2). |
-| **`sudo` без пароля** для `runner` *или* `apt` от root | Job **style-review** в PR: `sudo apt install cppcheck`. |
+| **`sudo` без пароля** для `runner` *или* `apt` от root | PR **style-review**: `apt install cppcheck`; job **python-import**: `apt install python3-tk` (для `matplotlib`/Tk в `plots.py`). |
 | Сеть | `curl`, `pip`, Arduino CLI, кэш Docker. |
 
 В **LXC** на Proxmox включите **`nesting=1`**, установите Docker **внутри** контейнера (см. [umbreon_zephyr/docs/self-hosted-ci.md](../../umbreon_zephyr/docs/self-hosted-ci.md), часть 1).

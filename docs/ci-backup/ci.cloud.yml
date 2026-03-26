@@ -103,10 +103,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install arduino-cli
+      - name: Ensure arduino-cli
         run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
-          echo "$PWD/bin" >> "$GITHUB_PATH"
+          if command -v arduino-cli >/dev/null 2>&1; then
+            echo "Using $(command -v arduino-cli) — $(arduino-cli version | head -1)"
+          else
+            curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+            echo "$PWD/bin" >> "$GITHUB_PATH"
+          fi
 
       - name: Cache board package
         uses: actions/cache@v4

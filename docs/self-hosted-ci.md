@@ -87,6 +87,21 @@ chmod 440 /etc/sudoers.d/runner-apt
 
 Или шире `NOPASSWD: ALL` для отладки (не рекомендуется для публичных сетей).
 
+### 1.3 Arduino CLI (быстрее job **firmware-build**)
+
+Если **`arduino-cli`** уже есть в **`PATH`** у пользователя **`runner`**, в workflow **не** выполняется скачивание установщика на каждый запуск.
+
+Один раз (от root, в **`/usr/local/bin`**). Скрипт **не** принимает `-b` как в `getopt`: первый аргумент — это **тег версии** (например `1.2.3`); каталог задаётся переменной **`BINDIR`**.
+
+```bash
+sudo mkdir -p /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sudo env BINDIR=/usr/local/bin sh
+```
+
+Проверка: **`/usr/local/bin/arduino-cli version`**. У **root** в интерактивной сессии иногда нет **`/usr/local/bin`** в **`PATH`** — это нормально; для CI важнее пользователь **`runner`**: `su - runner` и затем **`command -v arduino-cli && arduino-cli version`** (на типичном Ubuntu у **`runner`** путь уже в **`PATH`**).
+
+Кэш ядра и библиотек в **`~/.arduino15`** по-прежнему обрабатывается шагом **Cache** в GitHub Actions.
+
 ### 2. Регистрация runner’а на GitHub
 
 1. Откройте **https://github.com/&lt;OWNER&gt;/Umbreon_roborace** → **Settings** → **Actions** → **Runners** → **New self-hosted runner**.

@@ -100,7 +100,33 @@ curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.
 
 Проверка: **`/usr/local/bin/arduino-cli version`**. У **root** в интерактивной сессии иногда нет **`/usr/local/bin`** в **`PATH`** — это нормально; для CI важнее пользователь **`runner`**: `su - runner` и затем **`command -v arduino-cli && arduino-cli version`** (на типичном Ubuntu у **`runner`** путь уже в **`PATH`**).
 
-Кэш ядра и библиотек в **`~/.arduino15`** по-прежнему обрабатывается шагом **Cache** в GitHub Actions.
+Кэш ядра и библиотек в **`~/.arduino15`** обрабатывается шагом **Cache** в GitHub Actions — см. [§ 1.4](#14-arduino-rp2040-и-библиотеки-на-диске-раннера-опционально).
+
+### 1.4 Arduino rp2040 и библиотеки на диске раннера (опционально)
+
+Один раз под пользователем **`runner`** (те же команды, что в job **firmware-build** в `ci.yml`):
+
+```bash
+su - runner
+arduino-cli config init --overwrite
+arduino-cli config add board_manager.additional_urls \
+  https://github.com/earlephilhower/arduino-pico/releases/download/global/package_rp2040_index.json
+arduino-cli core update-index
+arduino-cli core install rp2040:rp2040
+arduino-cli lib install "Adafruit_VL53L0X"
+arduino-cli lib install "Adafruit SSD1306"
+arduino-cli lib install "Adafruit GFX Library"
+arduino-cli lib install "EncButton"
+```
+
+После этого шаги **Install rp2040** / **Install Arduino libraries** в CI в основном ничего не качают (ядро и libs уже в **`~/.arduino15`**).
+
+**Почему всё ещё тянется много мегабайт:** при **попадании** в **`actions/cache`** GitHub Actions **скачивает архив кэша** с инфраструктуры GitHub (~750 MB в вашем логе) — это отдельно от «платы уже на диске». Чтобы **не** загружать этот архив, когда **`~/.arduino15`** уже заполнен локально:
+
+1. В каталоге агента (рядом с **`runsvc.sh`**) в файле **`.env`** строка **`SKIP_ARDUINO_CACHE=true`**, затем перезапуск сервиса раннера (`sudo systemctl restart actions.runner.*` или как у вас настроено), **или**
+2. В репозитории: **Settings → Secrets and variables → Actions → Variables** — переменная **`SKIP_ARDUINO_CACHE`** со значением **`true`**.
+
+Workflow читает оба варианта (шаг **Arduino cache policy** в `ci.yml`); тогда **Cache board package** не выполняется, сборка использует локальный **`~/.arduino15`**.
 
 ### 2. Регистрация runner’а на GitHub
 

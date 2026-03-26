@@ -112,7 +112,18 @@ jobs:
             echo "$PWD/bin" >> "$GITHUB_PATH"
           fi
 
+      # SKIP_ARDUINO_CACHE: в .env агента (runner) или repo variable — см. docs/self-hosted-ci.md §1.4
+      - name: Arduino cache policy
+        id: arduino_cache
+        run: |
+          if [ "${SKIP_ARDUINO_CACHE:-}" = "true" ] || [ "${{ vars.SKIP_ARDUINO_CACHE }}" = "true" ]; then
+            echo "use_cache=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "use_cache=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Cache board package
+        if: steps.arduino_cache.outputs.use_cache == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.arduino15

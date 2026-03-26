@@ -1097,15 +1097,27 @@ function onTestResult(method, params) {
   const kp = params.KP || 0;
   const ki = params.KI || 0;
   const kd = params.KD || 0;
-  tr.innerHTML =
-    `<td style="text-align:left;font-weight:600">${method}</td>` +
-    `<td>${kp.toFixed(2)}</td>` +
-    `<td>${ki.toFixed(2)}</td>` +
-    `<td>${kd.toFixed(3)}</td>` +
-    `<td><button class="btn btn-primary" data-tune-kp="${kp}" data-tune-ki="${ki}" data-tune-kd="${kd}">Apply</button></td>`;
+  const tdMethod = document.createElement('td');
+  tdMethod.style.textAlign = 'left'; tdMethod.style.fontWeight = '600';
+  tdMethod.textContent = method;
+  tr.appendChild(tdMethod);
+  for (const val of [kp.toFixed(2), ki.toFixed(2), kd.toFixed(3)]) {
+    const td = document.createElement('td');
+    td.textContent = val;
+    tr.appendChild(td);
+  }
+  const tdBtn = document.createElement('td');
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn btn-primary';
+  applyBtn.textContent = 'Apply';
+  applyBtn.dataset.tuneKp = kp;
+  applyBtn.dataset.tuneKi = ki;
+  applyBtn.dataset.tuneKd = kd;
+  tdBtn.appendChild(applyBtn);
+  tr.appendChild(tdBtn);
   tbody.appendChild(tr);
   // Bind apply button
-  tr.querySelector('button').addEventListener('click', function() {
+  applyBtn.addEventListener('click', function() {
     const kpv = parseFloat(this.dataset.tuneKp);
     const kiv = parseFloat(this.dataset.tuneKi);
     const kdv = parseFloat(this.dataset.tuneKd);

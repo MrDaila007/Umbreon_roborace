@@ -6,16 +6,60 @@ The firmware is split into two layers, with a companion dashboard app:
 
 | File | Role |
 |---|---|
-| `luna_car.h` | Hardware abstraction — sensors, actuators, PID, IMU |
+| `sensor_config.h` | Compile-time sensor selection — constants, role indices, defaults |
+| `luna_car.h` | Hardware abstraction — sensors (TF-Luna / VL53L0X), actuators, PID, IMU |
 | `Umbreon_roborace.ino` | Control logic, runtime config, EEPROM, command protocol |
 | `wifi_debug/wifi_debug.ino` | Wemos D1 Mini firmware — WiFi AP + UART↔TCP bridge |
 | `dashboard/` | Python app — live plots, track map, remote settings editor |
 
 ---
 
+## Sensor Configuration (`sensor_config.h`)
+
+The firmware supports two sensor hardware configurations, selected at compile time via `SENSOR_CONFIG` in `Umbreon_roborace.ino`:
+
+| Config | Constant | Sensors | Interface | Range |
+|---|---|---|---|---|
+| **4× TF-Luna** | `SENSOR_4X_LUNA` | 4 LiDAR | SerialPIO UART | 20–800 cm |
+| **6× VL53L0X** | `SENSOR_6X_VL53L0X` | 6 ToF | I2C (Wire1) | 3–200 cm |
+
+All downstream code uses **role indices** (`IDX_LEFT`, `IDX_FRONT_LEFT`, etc.) and `SENSOR_COUNT` instead of hardcoded array positions. This lets steering, telemetry, and dashboard code work identically for both configs.
+
+### Role indices
+
+| Index | 4× TF-Luna | 6× VL53L0X |
+|---|---|---|
+| `IDX_HARD_RIGHT` | — | s[0] |
+| `IDX_FRONT_RIGHT` | — | s[1] |
+| `IDX_RIGHT` | s[3] | s[2] |
+| `IDX_LEFT` | s[0] | s[3] |
+| `IDX_FRONT_LEFT` | s[1] | s[4] |
+| `IDX_HARD_LEFT` | — | s[5] |
+
+The 6× config defines `HAS_HARD_SIDES = 1`, enabling an extra steering term that blends the hard-side sensors for wider corner awareness.
+
+### Default thresholds
+
+Thresholds differ because the VL53L0X has shorter range:
+
+| Key | 4× TF-Luna | 6× VL53L0X |
+|---|---|---|
+| `FOD` | 1200 (120 cm) | 800 (80 cm) |
+| `SOD` | 1000 (100 cm) | 600 (60 cm) |
+| `ACD` | 800 (80 cm) | 400 (40 cm) |
+| `CFD` | 201 (20.1 cm) | 150 (15 cm) |
+
+### Read-only config parameters
+
+`$GET` reports two read-only fields reflecting the compiled sensor config:
+- `SNS` — sensor count (4 or 6)
+- `SMX` — max sensor range in cm×10 (8000 or 2000)
+
+---
+
 ## luna_car.h
 
-### TF-Luna LiDAR driver
+### TF-Luna LiDAR driver (SENSOR_4X_LUNA)
 
 Each of the 4 sensors is read over a dedicated **SerialPIO** port (software UART, RX-only).
 
@@ -34,7 +78,7 @@ Each of the 4 sensors is read over a dedicated **SerialPIO** port (software UART
 
 `poll_lidars()` drains all pending bytes from each SerialPIO and feeds them into a per-sensor state machine (`_process_byte`). It must be called **every loop iteration** to prevent UART buffer overflow.
 
-`read_sensors()` returns a static `int[4]` array of distances in **cm×10**:
+`read_sensors()` returns a static `int[SENSOR_COUNT]` array of distances in **cm×10**:
 - `s[0]` Left (GP2)
 - `s[1]` Front-Left (GP3)
 - `s[2]` Front-Right (GP4)
@@ -43,6 +87,45 @@ Each of the 4 sensors is read over a dedicated **SerialPIO** port (software UART
 Using cm×10 keeps the same numeric range as the original Sharp IR sensors, so all threshold constants remain unchanged.
 
 If a sensor has not yet received a valid packet, its slot returns `9999` (treated as "very far").
+
+---
+
+### VL53L0X ToF driver (SENSOR_6X_VL53L0X)
+
+Six VL53L0X Time-of-Flight sensors on I2C (Wire1), using the Adafruit_VL53L0X library.
+
+**Wiring:**
+
+| VL53L0X pin | Pico 2 pin |
+|---|---|
+| SDA | GP20 (Wire1) |
+| SCL | GP21 (Wire1) |
+| XSHUT (per sensor) | GP6, GP7, GP8, GP9, GP14, GP15 |
+| VCC | 3.3 V |
+| GND | GND |
+
+**Initialization sequence:**
+1. All XSHUT pins pulled LOW (sensors held in reset)
+2. Wire1 started at 100 kHz (reduced from 400 kHz for reliability)
+3. Each sensor enabled one at a time (XSHUT HIGH, 50 ms delay), assigned a unique I2C address (0x30–0x35)
+4. Each sensor starts continuous ranging (~33 ms measurement period)
+
+**Reading:**
+- `poll_lidars()` is a no-op — I2C reads happen in `read_sensors()`
+- `read_sensors()` checks `isRangeComplete()` per sensor, reads mm, converts to cm×10 (identity: 1 mm = 1 cm×10)
+- Out-of-range readings (VL53L0X returns 8190) are treated as invalid → `9999`
+- Values capped at `MAX_SENSOR_RANGE` (2000 = 200 cm)
+
+**Sensor layout (mirrored — physical index matches XSHUT pin order):**
+
+```
+s[0] Hard-Right  (GP6 XSHUT)  — 90° right, -120 mm lateral
+s[1] Front-Right (GP7 XSHUT)  —  0° fwd,   -40 mm
+s[2] Right       (GP8 XSHUT)  — 45° right,  -90 mm
+s[3] Left        (GP9 XSHUT)  — 45° left,   +90 mm
+s[4] Front-Left  (GP14 XSHUT) —  0° fwd,    +40 mm
+s[5] Hard-Left   (GP15 XSHUT) — 90° left,  +120 mm
+```
 
 ---
 
@@ -138,6 +221,48 @@ All IMU code is wrapped in `#if USE_IMU` — setting it to `0` strips the IMU en
 
 ---
 
+## OLED Menu System (`menu.h`) — optional, `USE_OLED_MENU=1`
+
+Standalone on-car interface using an SSD1306 128x64 OLED display and rotary encoder with button.
+
+### Hardware
+
+| Component | Pin | Notes |
+|---|---|---|
+| SSD1306 OLED | GP0 (SDA), GP1 (SCL) | Shared I2C0 bus with MPU-6050 (addr 0x3C vs 0x68) |
+| Rotary encoder CLK | GP12 | |
+| Rotary encoder DT | GP22 | |
+| Rotary encoder SW | GP19 | Button with click/hold/fast detection |
+
+### Libraries
+
+- **Adafruit SSD1306** + **Adafruit GFX** — display driver and graphics primitives
+- **EncButton** by AlexGyver — encoder polling with debounce, click/hold/fast-rotation detection
+
+### Screen state machine
+
+```
+DASHBOARD ──click──> MAIN_MENU
+MAIN_MENU ──select──> Settings | Tests | Actions | Info
+Settings: SETTINGS_GROUPS → SETTINGS_LIST → SETTINGS_EDIT
+Tests: TESTS → CONFIRM (motor tests) → TEST_RUNNING
+Actions: ACTIONS → CONFIRM → execute
+Long-press from anywhere → DASHBOARD
+```
+
+**10 screens:** Dashboard (live sensor bars + speed + battery), Main Menu, Settings Groups, Settings List, Settings Edit (2x font value, encoder adjust), Tests (8 items, motor tests marked [!]), Test Running, Actions (start/stop/save/load/reset), Confirm dialog, Info (scrollable — FW version, sensors, IMU, battery, WiFi status/SSID/IP).
+
+**Navigation:** turn = scroll, click = select/confirm, hold = back/cancel. Fast rotation = larger parameter steps.
+
+### Integration
+
+- `menu_init()` — called in `setup()` after IMU calibration. Initialises Wire if IMU is disabled, starts OLED, shows boot splash.
+- `menu_tick()` — called every `loop()` iteration. Polls encoder (~5µs), redraws at ~8 FPS (~4ms when rendering).
+- All 27 writable parameters are accessible via the settings editor with type-aware steps (int/float/bool).
+- When `USE_OLED_MENU=0`, all functions compile to no-ops — zero overhead.
+
+---
+
 ## Umbreon_roborace.ino — Control Logic
 
 ### Main loop
@@ -161,14 +286,19 @@ loop()
 
 ### Steering logic
 
-```
-if both sides > SIDE_OPEN_DIST:
-    diff = +800            // open corridor — bias right wall
-else:
-    diff = s[3] - s[0]     // track mid-channel between walls
+Uses role indices for sensor-config-independent logic:
 
-if all 4 sensors < ALL_CLOSE_DIST:
-    diff = +800            // boxed in — hard right turn to escape
+```
+if s[IDX_LEFT] > SIDE_OPEN_DIST and s[IDX_RIGHT] > SIDE_OPEN_DIST:
+    diff = +WALL_FOLLOW_BIAS (800)  // open corridor — bias right wall
+else:
+    diff = s[IDX_RIGHT] - s[IDX_LEFT]   // track mid-channel between walls
+
+if all SENSOR_COUNT sensors < ALL_CLOSE_DIST:
+    diff = +WALL_FOLLOW_BIAS (800)       // boxed in — hard right turn to escape
+
+if HAS_HARD_SIDES (6× VL53L0X only):
+    diff += (s[IDX_HARD_RIGHT] - s[IDX_HARD_LEFT]) × 0.25  // blend hard-side sensors
 ```
 
 `diff` is then multiplied by `coef` (0.3 clear / 0.7 blocked) before `write_steer()`.
@@ -219,8 +349,9 @@ All tuning parameters (obstacle thresholds, PID gains, ESC/steering limits, spee
 ### EEPROM layout
 
 A packed `CarSettings` struct at address 0 (~60 bytes):
-- Magic `0x554D4252` ("UMBR"), version 5, all parameters, trailing checksum
-- `load_settings()` in `setup()` validates magic + version + checksum before applying
+- Magic `0x554D4252` ("UMBR"), version 6, all parameters, trailing checksum
+- Includes `sensor_config` field — `load_settings()` rejects saved configs that don't match the compiled `SENSOR_CONFIG` (prevents loading 4-sensor settings into a 6-sensor build)
+- `load_settings()` in `setup()` validates magic + version + checksum + sensor_config before applying
 - `save_settings()` populates struct, computes checksum, writes via `EEPROM.put()` + `commit()`
 
 ### Command protocol
@@ -266,8 +397,10 @@ Separate firmware for the Wemos D1 Mini (ESP8266). Flashed independently via Ard
 
 Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **port 23**. Bidirectional transparent bridge: everything the car sends over UART appears on the TCP socket, and vice versa.
 
+**WiFi status reporting:** ESP sends `# Mode:`, `# SSID:`, `# IP:`, `# Status: ready` over UART during boot. The Pico parses these to display WiFi status on the OLED Info screen. If the Pico missed the boot messages, it can query status by sending `#WIFISTATUS` over UART — the ESP replies with the same status lines.
+
 **Built-in web UI** (`web_ui.h` PROGMEM, ~20KB):
-- Live telemetry (4 LiDARs, speed, steer, IMU, battery voltage)
+- Live telemetry (4 or 6 sensors auto-detected, speed, steer, IMU, battery voltage)
 - Track map with normal/light/collapsed modes
 - Settings in grouped categories (⚠ Obstacles, ⏱ Speed, ⚙ PID, ⇄ Steering, ⏲ Loop, ⚸ Encoder, ☑ Flags, ⚡ Battery) with checkbox rendering for bool params
 - Servo calibration wizard (step-by-step min/max/neutral)
@@ -279,8 +412,8 @@ Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **p
 
 | D1 Mini | Pico 2 |
 |---|---|
-| RX | GP6 (UART1 TX) |
-| TX | GP7 (UART1 RX) |
+| RX | GP16 (UART1 TX) |
+| TX | GP17 (UART1 RX) |
 | 3V3 | 3.3 V (or power via USB) |
 | GND | GND |
 
@@ -289,20 +422,25 @@ Creates WiFi AP **"Umbreon"** (password `12345678`) and runs a TCP server on **p
 Each control tick (25 Hz) the car sends a CSV line over UART1:
 
 ```
+# 4× TF-Luna:
 ms,s0,s1,s2,s3,steer,speed,target[,yaw,heading]
+
+# 6× VL53L0X:
+ms,s0,s1,s2,s3,s4,s5,steer,speed,target[,yaw,heading]
 ```
 
 | Field | Unit | Description |
 |---|---|---|
 | ms | ms | `millis()` timestamp |
-| s0–s3 | cm×10 | LiDAR distances (Left, FL, FR, Right) |
+| s0–s3 (4-sensor) | cm×10 | Distances: Left, FL, FR, Right |
+| s0–s5 (6-sensor) | cm×10 | Distances: Hard-Right, Front-Right, Right, Left, Front-Left, Hard-Left |
 | steer | — | Steering command sent (`diff × coef`) |
 | speed | m/s | Measured wheel speed |
 | target | m/s | Target speed |
 | yaw | °/s | Gyro Z rate (only if `USE_IMU`) |
 | heading | ° | Accumulated heading (only if `USE_IMU`) |
 
-A CSV header line is printed once at startup.
+A CSV header line is printed once at startup. The dashboard auto-detects the sensor count from the number of fields in the header/first telemetry line.
 
 ### Connecting
 

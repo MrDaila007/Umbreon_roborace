@@ -12,9 +12,12 @@ Serves the web UI and bridges WebSocket ↔ TCP car connection.
 
 import asyncio
 import json
+import logging
 import sys
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from aiohttp import web
 
@@ -89,8 +92,8 @@ class CarBridge:
                     await self._process_line(line)
         except asyncio.CancelledError:
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Car read loop error: %s", e)
         finally:
             self.connected = False
             await self._broadcast_status()
@@ -125,11 +128,14 @@ class CarBridge:
 
     async def _broadcast(self, msg: dict):
         text = json.dumps(msg)
+        dead = []
         for ws in list(self.ws_clients):
             try:
                 await ws.send_str(text)
             except Exception:
-                self.ws_clients.discard(ws)
+                dead.append(ws)
+        for ws in dead:
+            self.ws_clients.discard(ws)
 
     async def _broadcast_status(self):
         await self._broadcast({
@@ -189,8 +195,8 @@ async def websocket_handler(request):
 
             elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE):
                 break
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("WebSocket handler error: %s", e)
     finally:
         bridge.ws_clients.discard(ws)
 

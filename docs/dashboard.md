@@ -80,8 +80,8 @@ Dark theme. Charts use lightweight Canvas API (no external libraries). All zero-
 
 | File | Role |
 |---|---|
-| `protocol.py` | CSV telemetry parser (8-field no-IMU, 10-field with-IMU). Command encoder/decoder |
-| `car_config.py` | Constants, sensor geometry, key mappings, default values |
+| `protocol.py` | CSV telemetry parser (auto-detects 4 or 6 sensors, with/without IMU). Command encoder/decoder |
+| `car_config.py` | Constants, per-sensor-config geometry (`SENSOR_CONFIGS`), key mappings, default values |
 | `settings_file.py` | JSON load/save for PC-side settings profiles |
 
 ### Desktop (tkinter) version
@@ -103,10 +103,12 @@ Four stacked subplots, updated at ~10 Hz with a 250-sample rolling window (~10 s
 
 | Subplot | Channels | Y range |
 |---|---|---|
-| LiDAR distances | s0 (L), s1 (FL), s2 (FR), s3 (R) | 0–3000 cm×10 |
+| Sensor distances | 4 lines (TF-Luna) or 6 lines (VL53L0X) — auto-detected | 0–3000 cm×10 |
 | Speed | actual (m/s), target (m/s) | 0–4.0 |
 | Steering | steer command | ±800 |
 | IMU | yaw rate (°/s), heading (°) | ±200 |
+
+The number of sensor lines adapts automatically based on the telemetry header field count.
 
 ---
 
@@ -119,18 +121,30 @@ Builds a 2D map in real time using dead reckoning:
 - **Wall points**: LiDAR ray endpoints projected from sensor positions, color-coded per sensor
 - **Car trail**: yellow polyline of all visited positions
 
-**Sensor geometry** (from real car measurements):
+**Sensor geometry** (from real car measurements, defined in `car_config.py` `SENSOR_CONFIGS`):
 
 ```
 Wheelbase: 173 mm    Sensor forward offset: 253 mm (from rear axle)
 Max steering angle: 28°
 
+4× TF-Luna:
 Sensor    Angle   Lateral offset
 s0 L-Out   +45°     +90 mm (left)
 s1 L-Fwd     0°     +40 mm
 s2 R-Fwd     0°     -40 mm
 s3 R-Out   -45°     -90 mm (right)
+
+6× VL53L0X:
+Sensor    Angle   Lateral offset
+s0 H-Left  +90°    +120 mm (hard left)
+s1 L-Out   +45°     +90 mm
+s2 L-Fwd     0°     +40 mm
+s3 R-Fwd     0°     -40 mm
+s4 R-Out   -45°     -90 mm
+s5 H-Right -90°    -120 mm (hard right)
 ```
+
+The dashboard reads `SNS` (sensor count) from `$GET` and selects the matching geometry config for the track map.
 
 **Controls:**
 - **Click + drag**: pan
@@ -152,9 +166,8 @@ s3 R-Out   -45°     -90 mm (right)
 | Tachometer | `ENH` `WDM` |
 | Control Loop | `LMS` `SPD1` `SPD2` `COE1` `COE2` |
 | Navigation | `WDD` `RCW` `STK` |
-| Hardware | `IMR` `SVR` `CAL` |
-| Battery | `BEN` `BML` `BLV` |
-| Flags (read-only) | `IMU` `DBG` |
+| Hardware | `IMR` `SVR` `CAL` `BEN` `BML` `BLV` |
+| Flags (read-only) | `IMU` `DBG` `SNS` `SMX` |
 
 ### Buttons
 
@@ -218,6 +231,8 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 | `BLV` | Battery Low Voltage Cutoff (V) | float |
 | `IMU` | IMU Enabled (read-only) | int |
 | `DBG` | WiFi Debug Enabled (read-only) | int |
+| `SNS` | Sensor Count (read-only, 4 or 6) | int |
+| `SMX` | Max Sensor Range cm×10 (read-only) | int |
 
 ---
 
@@ -226,7 +241,7 @@ ASCII commands over the existing TCP bridge. Telemetry lines start with digits, 
 Settings are stored as a packed `CarSettings` struct at EEPROM address 0:
 
 - **Magic**: `0x554D4252` ("UMBR")
-- **Version**: 5
+- **Version**: 6 (includes `sensor_config` field; rejects mismatched sensor configs on load)
 - **Checksum**: sum of all preceding bytes (uint8)
 - **Size**: ~60 bytes
 
@@ -245,7 +260,8 @@ Click **Record** to save telemetry to a timestamped CSV file (`umbreon_YYYYMMDD_
 `sim.py --bridge` runs the simulation with a TCP server on port 8023, mimicking the Wemos D1 Mini WiFi bridge. This lets you test the dashboard without hardware.
 
 ```
-cd simulation && python sim.py --bridge
+cd simulation && python sim.py --bridge               # default 4 sensors
+cd simulation && python sim.py --bridge --sensors 6   # 6-sensor config
 ```
 
 The bridge:
@@ -253,6 +269,7 @@ The bridge:
 - Responds to `$PING`, `$GET`, `$SET`, `$SAVE`, `$LOAD`, `$RST`
 - Accepts multiple dashboard clients simultaneously
 - Runs the matplotlib sim visualization alongside
+- `--sensors 4|6` selects sensor layout and raycast geometry (matches firmware configs)
 
 The sim window shows the car running the track. The dashboard shows live plots and builds a track map from the sim's LiDAR + dead reckoning.
 

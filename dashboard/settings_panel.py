@@ -12,7 +12,7 @@ from car_config import (
     DEFAULTS, KEY_NAMES, READONLY_KEYS, PARAM_GROUPS, FLOAT_KEYS,
 )
 from protocol import encode_get, encode_set, encode_save, encode_load, encode_reset
-from settings_file import save_settings, load_settings
+from settings_file import save_settings, load_settings, VALIDATION_RANGES
 
 
 class SettingsPanel:
@@ -143,6 +143,20 @@ class SettingsPanel:
             return
         params = {k: v for k, v in self.get_values().items()
                   if k not in READONLY_KEYS}
+        # Validate before sending
+        for key, val in params.items():
+            if key in VALIDATION_RANGES:
+                lo, hi = VALIDATION_RANGES[key]
+                try:
+                    num = float(val)
+                    if num < lo or num > hi:
+                        messagebox.showwarning(
+                            "Invalid Value",
+                            f"{KEY_NAMES.get(key, key)} ({key}) = {val} "
+                            f"is out of range [{lo}, {hi}]")
+                        return
+                except (TypeError, ValueError):
+                    pass
         self.conn.send_command(encode_set(params))
 
     def save_eeprom(self):

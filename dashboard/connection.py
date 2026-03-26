@@ -28,15 +28,15 @@ class Connection:
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        self._connected = False
+        self._connected_event = threading.Event()
 
     @property
     def connected(self) -> bool:
-        return self._connected
+        return self._connected_event.is_set()
 
     def connect(self, host: str = None, port: int = None, timeout: float = 3.0):
         """Connect to the car. Raises socket errors on failure."""
-        if self._connected:
+        if self.connected:
             self.disconnect()
         if host:
             self.host = host
@@ -47,7 +47,7 @@ class Connection:
         self._sock.settimeout(timeout)
         self._sock.connect((self.host, self.port))
         self._sock.settimeout(0.1)  # non-blocking-ish for recv
-        self._connected = True
+        self._connected_event.set()
         self._running = True
         self._thread = threading.Thread(target=self._io_loop, daemon=True)
         self._thread.start()
@@ -63,7 +63,7 @@ class Connection:
             except OSError:
                 pass
         self._sock = None
-        self._connected = False
+        self._connected_event.clear()
 
     def send_command(self, cmd: str):
         """Queue a command string for sending. Must end with \\n."""
@@ -88,14 +88,14 @@ class Connection:
                 data = self._sock.recv(4096)
                 if not data:
                     # Connection closed by remote
-                    self._connected = False
+                    self._connected_event.clear()
                     self._running = False
                     break
                 buf += data
             except socket.timeout:
                 pass
             except OSError:
-                self._connected = False
+                self._connected_event.clear()
                 self._running = False
                 break
 

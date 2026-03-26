@@ -3,7 +3,11 @@
 
 PYTHON   ?= python
 PIP      ?= pip
+ifeq ($(OS),Windows_NT)
 CLI      ?= "$(LOCALAPPDATA)/Programs/arduino-ide/resources/app/lib/backend/resources/arduino-cli"
+else
+CLI      ?= arduino-cli
+endif
 SIM_DIR   = simulation
 DASH_DIR  = dashboard
 PORT      ?= 8080

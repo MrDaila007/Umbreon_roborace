@@ -6,13 +6,11 @@
  * | |\ \ (_) | |_) | (_) | | | (_| | (_|  __/
  * \_| \_\___/|_.__/ \___/|_|  \__,_|\___\___|
  *
- * Umbreon — RP2350 (Pico 2) + 4× TF-Luna LiDAR
+ * Umbreon — RP2350 (Pico 2) autonomous roborace car
  *
- * Sensor layout (SerialPIO RX pins):
- *   s[0] Left        GP2
- *   s[1] Front-Left  GP3
- *   s[2] Front-Right GP4
- *   s[3] Right       GP5
+ * Sensor configurations (compile-time selection via SENSOR_CONFIG):
+ *   SENSOR_4X_LUNA    — 4× TF-Luna LiDAR (SerialPIO UART)
+ *   SENSOR_6X_VL53L0X — 6× VL53L0X ToF (I2C on Wire1)
  *
  * Actuators:
  *   Steering servo   GP10
@@ -20,26 +18,43 @@
  *   Tachometer       GP13 (RISING interrupt)
  *
  * Distance units: cm×10  (e.g. 1200 = 120 cm, 200 = 20 cm)
- *   TF-Luna range: ~20 cm … 800 cm  →  200 … 8000 in these units
  */
 
 #pragma GCC optimize("Ofast")
 
+#define FW_VERSION  "1.1.0"
+
 // ─── Feature flags ──────────────────────────────────────────────────────────
+// Sensor type constants (must be defined before SENSOR_CONFIG)
+#define SENSOR_4X_LUNA      1
+#define SENSOR_6X_VL53L0X   2
+#define SENSOR_CONFIG   SENSOR_6X_VL53L0X   // SENSOR_4X_LUNA or SENSOR_6X_VL53L0X
 #define USE_IMU         1       // 1 = enable MPU-6050 gyro, 0 = disable
 #define USE_WIFI_DEBUG  1       // 1 = enable Wemos D1 Mini WiFi telemetry, 0 = disable
+#define USE_OLED_MENU   1       // 1 = enable SSD1306 OLED + rotary encoder menu, 0 = disable
+#define USE_TRACK_LEARN 1       // 1 = enable track profile learning & race mode, 0 = disable
 
 #if USE_WIFI_DEBUG
-#define DEBUG_TX_PIN  16         // GP16 = UART0 TX → D1 Mini RX
-#define DEBUG_RX_PIN  17         // GP17 = UART0 RX ← D1 Mini TX
+#define DEBUG_TX_PIN  16         // GP16 = UART1 TX → D1 Mini RX
+#define DEBUG_RX_PIN  17         // GP17 = UART1 RX ← D1 Mini TX
 #endif
 
-// ─── Runtime-configurable globals (defaults match original #defines) ────────
+// ─── All includes first (Arduino inserts prototypes after the last #include) ─
+#include "sensor_config.h"      // needs SENSOR_CONFIG; provides DEFAULT_FOD/SOD/ACD/CFD, SENSOR_COUNT, IDX_*
+#include "luna_car.h"
+#include <EEPROM.h>
+#include "eeprom_settings.h"    // CarSettings struct — must be last so prototypes see it
+#include "core1.h"              // dual-core: mutex, FIFO messages, sensor snapshot
+#if USE_TRACK_LEARN
+#include "track_learn.h"        // track profile learning & race mode
+#endif
+
+// ─── Runtime-configurable globals (defaults from sensor_config.h) ────────────
 // Obstacle thresholds (cm×10)
-int   cfg_front_obstacle_dist = 1200;   // 120 cm — start steering around
-int   cfg_side_open_dist      = 1000;   // 100 cm — side is "open"
-int   cfg_all_close_dist      =  800;   //  80 cm — surrounded, force turn
-int   cfg_close_front_dist    =  201;   //  20 cm — emergency reverse
+int   cfg_front_obstacle_dist = DEFAULT_FOD;
+int   cfg_side_open_dist      = DEFAULT_SOD;
+int   cfg_all_close_dist      = DEFAULT_ACD;
+int   cfg_close_front_dist    = DEFAULT_CFD;
 
 // PID coefficients (scaled for µs ESC output, ~14× from original degree-based gains)
 float cfg_pid_kp   = 60.0f;
@@ -91,76 +106,41 @@ float cfg_bat_low        = 6.0f;   // low voltage cutoff (V) — stop car if bel
 // ─── Start/Stop control ────────────────────────────────────────────────────
 // #define COMPETITION_MODE     // uncomment to start driving immediately
 #ifdef COMPETITION_MODE
-bool car_running = true;
+volatile bool car_running = true;
 #else
-bool car_running = false;
+volatile bool car_running = false;
 #endif
 
 // ─── Manual drive mode ($DRV command) ─────────────────────────────────────
-bool manual_mode = false;
-bool drv_enabled = false;       // $DRVEN/$DRVOFF — allows $DRV without $START
+volatile bool manual_mode = false;
+volatile bool drv_enabled = false;       // $DRVEN/$DRVOFF — allows $DRV without $START
 unsigned long last_drv_ms = 0;
 int manual_steer = 0;
 float manual_speed = 0.0f;
 
-#include "luna_car.h"
-#include "tests.h"      // hardware tests + WiFi remote tests
-
-#include <EEPROM.h>
-
 Car car;
 
-// ─── EEPROM settings ────────────────────────────────────────────────────────
-#define SETTINGS_MAGIC   0x554D4252   // "UMBR"
-#define SETTINGS_VERSION 5
-#define SETTINGS_ADDR    0
+// ─── ESP WiFi status (parsed from # lines on UART1) ────────────────────────
+#if USE_WIFI_DEBUG
+char esp_wifi_ssid[24] = "";    // AP SSID or STA network name
+char esp_wifi_ip[16]   = "";    // IP address
+bool esp_wifi_is_ap    = true;  // true = AP mode, false = STA mode
+bool esp_wifi_ready    = false; // true once "# Status: ready" received
+#endif
 
-struct __attribute__((packed)) CarSettings {
-    uint32_t magic;
-    uint8_t  version;
-    // Obstacle thresholds
-    int16_t  front_obstacle_dist;
-    int16_t  side_open_dist;
-    int16_t  all_close_dist;
-    int16_t  close_front_dist;
-    // PID
-    float    pid_kp;
-    float    pid_ki;
-    float    pid_kd;
-    // ESC (µs, 1000–2000)
-    int16_t  min_speed;
-    int16_t  max_speed;
-    int16_t  min_bspeed;
-    // Steering
-    int8_t   min_point;
-    int8_t   max_point;
-    int8_t   neutral_point;
-    // Tachometer
-    int8_t   encoder_holes;
-    float    wheel_diam_m;
-    // Control
-    int8_t   loop_ms;
-    float    spd_clear;
-    float    spd_blocked;
-    float    coe_clear;
-    float    coe_blocked;
-    // Navigation
-    float    wrong_dir_deg;
-    uint8_t  race_cw;
-    int8_t   stuck_thresh;
-    // IMU
-    uint8_t  imu_rotate;
-    // Servo
-    uint8_t  servo_reverse;
-    // Calibration
-    uint8_t  calibrated;
-    // Battery
-    uint8_t  bat_enabled;
-    float    bat_multiplier;
-    float    bat_low;
-    // Checksum (sum of all preceding bytes)
-    uint8_t  checksum;
-};
+#include "tests.h"              // hardware tests — needs cfg_* globals and Car defined above
+#include "menu.h"               // OLED menu — needs cfg_* globals, Car, test functions
+
+// ─── Telemetry helper ────────────────────────────────────────────────────────
+// Print sensor values as CSV (loops over SENSOR_COUNT)
+#if USE_WIFI_DEBUG
+static void print_sensor_csv(int* s) {
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        Serial1.print(s[i]);
+        Serial1.print(',');
+    }
+}
+#endif
 
 static uint8_t compute_checksum(const CarSettings& s) {
     uint8_t sum = 0;
@@ -173,6 +153,7 @@ static uint8_t compute_checksum(const CarSettings& s) {
 static void populate_struct(CarSettings& s) {
     s.magic   = SETTINGS_MAGIC;
     s.version = SETTINGS_VERSION;
+    s.sensor_config = SENSOR_CONFIG;
     s.front_obstacle_dist = (int16_t)cfg_front_obstacle_dist;
     s.side_open_dist      = (int16_t)cfg_side_open_dist;
     s.all_close_dist      = (int16_t)cfg_all_close_dist;
@@ -242,6 +223,9 @@ bool load_settings() {
     EEPROM.get(SETTINGS_ADDR, s);
     if (s.magic != SETTINGS_MAGIC || s.version != SETTINGS_VERSION)
         return false;
+    // Reject settings saved with a different sensor configuration
+    if (s.sensor_config != SENSOR_CONFIG)
+        return false;
     if (compute_checksum(s) != s.checksum)
         return false;
     apply_struct(s);
@@ -271,9 +255,9 @@ static void cmd_get() {
     Serial1.print(",SOD="); Serial1.print(cfg_side_open_dist);
     Serial1.print(",ACD="); Serial1.print(cfg_all_close_dist);
     Serial1.print(",CFD="); Serial1.print(cfg_close_front_dist);
-    Serial1.print(",KP=");  Serial1.print(cfg_pid_kp, 2);
-    Serial1.print(",KI=");  Serial1.print(cfg_pid_ki, 2);
-    Serial1.print(",KD=");  Serial1.print(cfg_pid_kd, 2);
+    Serial1.print(",KP=");  Serial1.print(cfg_pid_kp, 4);
+    Serial1.print(",KI=");  Serial1.print(cfg_pid_ki, 4);
+    Serial1.print(",KD=");  Serial1.print(cfg_pid_kd, 4);
     Serial1.print(",MSP="); Serial1.print(cfg_min_speed);
     Serial1.print(",XSP="); Serial1.print(cfg_max_speed);
     Serial1.print(",BSP="); Serial1.print(cfg_min_bspeed);
@@ -281,7 +265,7 @@ static void cmd_get() {
     Serial1.print(",XNP="); Serial1.print(cfg_max_point);
     Serial1.print(",NTP="); Serial1.print(cfg_neutral_point);
     Serial1.print(",ENH="); Serial1.print(cfg_encoder_holes);
-    Serial1.print(",WDM="); Serial1.print(cfg_wheel_diam_m, 3);
+    Serial1.print(",WDM="); Serial1.print(cfg_wheel_diam_m, 4);
     Serial1.print(",LMS="); Serial1.print(cfg_loop_ms);
     Serial1.print(",SPD1="); Serial1.print(cfg_spd_clear, 1);
     Serial1.print(",SPD2="); Serial1.print(cfg_spd_blocked, 1);
@@ -294,10 +278,13 @@ static void cmd_get() {
     Serial1.print(",SVR="); Serial1.print(cfg_servo_reverse ? 1 : 0);
     Serial1.print(",CAL="); Serial1.print(cfg_calibrated ? 1 : 0);
     Serial1.print(",BEN="); Serial1.print(cfg_bat_enabled ? 1 : 0);
-    Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 2);
+    Serial1.print(",BML="); Serial1.print(cfg_bat_multiplier, 4);
     Serial1.print(",BLV="); Serial1.print(cfg_bat_low, 1);
     Serial1.print(",IMU="); Serial1.print(USE_IMU);
     Serial1.print(",DBG="); Serial1.print(USE_WIFI_DEBUG);
+    Serial1.print(",SNS="); Serial1.print(SENSOR_COUNT);
+    Serial1.print(",SMX="); Serial1.print(MAX_SENSOR_RANGE);
+    Serial1.print(",FWV="); Serial1.print(FW_VERSION);
     Serial1.println();
 }
 
@@ -343,7 +330,7 @@ static bool parse_set_pair(const char* pair) {
     else if (strcmp(key, "BEN")  == 0) cfg_bat_enabled          = atoi(val) != 0;
     else if (strcmp(key, "BML")  == 0) cfg_bat_multiplier      = atof(val);
     else if (strcmp(key, "BLV")  == 0) cfg_bat_low             = atof(val);
-    // IMU, DBG are read-only — silently ignore
+    // IMU, DBG, SNS, SMX are read-only — silently ignore
     else return false;
 
     return true;
@@ -381,12 +368,12 @@ static void cmd_load() {
     }
 }
 
-static void cmd_rst() {
-    // Reset to compile-time defaults
-    cfg_front_obstacle_dist = 1200;
-    cfg_side_open_dist      = 1000;
-    cfg_all_close_dist      =  800;
-    cfg_close_front_dist    =  201;
+// Reset all cfg_* to compile-time defaults (reusable from WiFi cmd and OLED menu)
+static void cmd_rst_internal() {
+    cfg_front_obstacle_dist = DEFAULT_FOD;
+    cfg_side_open_dist      = DEFAULT_SOD;
+    cfg_all_close_dist      = DEFAULT_ACD;
+    cfg_close_front_dist    = DEFAULT_CFD;
     cfg_pid_kp   = 60.0f;
     cfg_pid_ki   = 40.0f;
     cfg_pid_kd   = 6.0f;
@@ -407,39 +394,51 @@ static void cmd_rst() {
     cfg_race_cw       = true;
     cfg_stuck_thresh  = 25;
     cfg_imu_rotate    = true;
-    cfg_servo_reverse = true;
+    cfg_servo_reverse = false;
     cfg_calibrated    = false;
     cfg_bat_enabled    = false;
     cfg_bat_multiplier = 2.8f;
     cfg_bat_low        = 6.0f;
+}
+
+static void cmd_rst() {
+    cmd_rst_internal();
     Serial1.println("$ACK");
 }
 
 // ─── WiFi remote tests ──────────────────────────────────────────────────
 
 static bool wifi_check_abort() {
+    rp2040.wdt_reset();  // keep watchdog fed during long-running tests
     if (Serial1.available() > 0 && Serial1.peek() == '$')
         return true;
     return false;
 }
 
-static void wifi_test_lidar() {
+void wifi_test_lidar() {
     unsigned long start = millis();
     while ((millis() - start) < 5000) {
         if (wifi_check_abort()) break;
         car.poll_lidars();
         int* s = car.read_sensors();
-        Serial1.print("$T:LIDAR,L="); Serial1.print(s[0]);
-        Serial1.print(",FL=");        Serial1.print(s[1]);
-        Serial1.print(",FR=");        Serial1.print(s[2]);
-        Serial1.print(",R=");         Serial1.print(s[3]);
+        Serial1.print("$T:LIDAR");
+#if SENSOR_COUNT >= 6
+        Serial1.print(",HL="); Serial1.print(s[IDX_HARD_LEFT]);
+#endif
+        Serial1.print(",L=");  Serial1.print(s[IDX_LEFT]);
+        Serial1.print(",FL="); Serial1.print(s[IDX_FRONT_LEFT]);
+        Serial1.print(",FR="); Serial1.print(s[IDX_FRONT_RIGHT]);
+        Serial1.print(",R=");  Serial1.print(s[IDX_RIGHT]);
+#if SENSOR_COUNT >= 6
+        Serial1.print(",HR="); Serial1.print(s[IDX_HARD_RIGHT]);
+#endif
         Serial1.println();
         delay(100);
     }
     Serial1.println("$TDONE:lidar");
 }
 
-static void wifi_test_servo() {
+void wifi_test_servo() {
     Serial1.println("$T:SERVO,phase=left");
     car.write_steer(-1000); delay(800);
     if (wifi_check_abort()) { car.write_steer(0); Serial1.println("$TDONE:servo"); return; }
@@ -466,7 +465,7 @@ static void wifi_test_servo() {
     Serial1.println("$TDONE:servo");
 }
 
-static void wifi_test_taho() {
+void wifi_test_taho() {
     noInterrupts();
     _taho_count = 0;
     _taho_last  = micros();
@@ -496,7 +495,7 @@ static void wifi_test_taho() {
     Serial1.println("$TDONE:taho");
 }
 
-static void wifi_test_esc() {
+void wifi_test_esc() {
     Serial1.println("$T:ESC,phase=arm");
     car.write_speed(0);
     delay(2000);
@@ -543,7 +542,7 @@ static void wifi_test_esc() {
     Serial1.println("$TDONE:esc");
 }
 
-static void wifi_test_speed() {
+void wifi_test_speed() {
     float target = 1.5f;
 
     Serial1.println("$T:SPEED,phase=arm");
@@ -588,7 +587,7 @@ static void wifi_test_speed() {
     Serial1.println("$TDONE:speed");
 }
 
-static void wifi_test_autotune() {
+void wifi_test_autotune() {
     const float TARGET     = 1.5f;
     const int   RELAY_D    = 20;
     const float HYST       = 0.10f;
@@ -740,8 +739,8 @@ static void wifi_test_autotune() {
     Serial1.println("$TDONE:autotune");
 }
 
-static void wifi_test_reactive() {
-    const int CLOSE_DIST = 1200;
+void wifi_test_reactive() {
+    const int CLOSE_DIST = cfg_front_obstacle_dist;
     const int FAR_DIST   = 3000;
 
     unsigned long start = millis();
@@ -750,10 +749,17 @@ static void wifi_test_reactive() {
         car.poll_lidars();
         int* s = car.read_sensors();
 
-        int L = s[0], FL = s[1], FR = s[2], R = s[3];
+        int L = s[IDX_LEFT], FL = s[IDX_FRONT_LEFT];
+        int FR = s[IDX_FRONT_RIGHT], R = s[IDX_RIGHT];
         float diff = (float)(R - L);
         if (FL < CLOSE_DIST) diff += (float)(CLOSE_DIST - FL);
         if (FR < CLOSE_DIST) diff -= (float)(CLOSE_DIST - FR);
+
+#if HAS_HARD_SIDES
+        // Blend hard-side sensors for wider awareness
+        int HL = s[IDX_HARD_LEFT], HR = s[IDX_HARD_RIGHT];
+        diff += (float)(HR - HL) * 0.3f;
+#endif
 
         float steer_f = constrain(diff / (float)FAR_DIST, -1.0f, 1.0f);
         int steer_val = (int)(steer_f * 1000.0f);
@@ -820,6 +826,10 @@ static void cmd_stop() {
     manual_speed = 0.0f;
     car.write_speed(0);
     car.write_steer(0);
+#if USE_TRACK_LEARN
+    trk_stop_learn();
+    trk_stop_race();
+#endif
     Serial1.println("$ACK");
     Serial1.println("$STS:STOP");
 }
@@ -828,7 +838,8 @@ static void cmd_status() {
     Serial1.println(car_running ? "$STS:RUN" : "$STS:STOP");
 }
 
-static void cmd_test(const char* name) {
+// Run test by index (0–7). Reusable from WiFi cmd_test() and OLED menu FIFO.
+static void cmd_test_by_index(int idx) {
     // Auto-stop car before running any test
     if (car_running) {
         car_running = false;
@@ -836,14 +847,27 @@ static void cmd_test(const char* name) {
         car.write_steer(0);
     }
 
-    if      (strcmp(name, "lidar")    == 0) wifi_test_lidar();
-    else if (strcmp(name, "servo")    == 0) wifi_test_servo();
-    else if (strcmp(name, "taho")     == 0) wifi_test_taho();
-    else if (strcmp(name, "esc")      == 0) wifi_test_esc();
-    else if (strcmp(name, "speed")    == 0) wifi_test_speed();
-    else if (strcmp(name, "autotune") == 0) wifi_test_autotune();
-    else if (strcmp(name, "reactive") == 0) wifi_test_reactive();
-    else if (strcmp(name, "cal")      == 0) { cfg_calibrated = false; run_calibration(); }
+    switch (idx) {
+        case 0: wifi_test_lidar();    break;
+        case 1: wifi_test_servo();    break;
+        case 2: wifi_test_taho();     break;
+        case 3: wifi_test_esc();      break;
+        case 4: wifi_test_speed();    break;
+        case 5: wifi_test_autotune(); break;
+        case 6: wifi_test_reactive(); break;
+        case 7: cfg_calibrated = false; run_calibration(); break;
+    }
+}
+
+static void cmd_test(const char* name) {
+    if      (strcmp(name, "lidar")    == 0) cmd_test_by_index(0);
+    else if (strcmp(name, "servo")    == 0) cmd_test_by_index(1);
+    else if (strcmp(name, "taho")     == 0) cmd_test_by_index(2);
+    else if (strcmp(name, "esc")      == 0) cmd_test_by_index(3);
+    else if (strcmp(name, "speed")    == 0) cmd_test_by_index(4);
+    else if (strcmp(name, "autotune") == 0) cmd_test_by_index(5);
+    else if (strcmp(name, "reactive") == 0) cmd_test_by_index(6);
+    else if (strcmp(name, "cal")      == 0) cmd_test_by_index(7);
     else {
         Serial1.print("$NAK:unknown_test:");
         Serial1.println(name);
@@ -882,6 +906,9 @@ static void dispatch_command(const char* line) {
         car.write_steer(0); car.write_speed(0);
         Serial1.println("$ACK");
     }
+#if USE_TRACK_LEARN
+    else if (strncmp(line, "$TRK:", 5) == 0) trk_dispatch(line + 5, Serial1);
+#endif
     // Unknown commands silently ignored
 }
 
@@ -893,6 +920,31 @@ static void process_commands() {
                 cmd_buf[cmd_len] = '\0';
                 if (cmd_buf[0] == '$') {
                     dispatch_command(cmd_buf);
+                } else if (cmd_buf[0] == '#') {
+                    // Parse ESP status lines: "# IP: ...", "# SSID: ...", "# Mode: ..."
+                    if (strncmp(cmd_buf, "# IP:", 5) == 0) {
+                        const char* v = cmd_buf + 5;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ip, v, sizeof(esp_wifi_ip) - 1);
+                        esp_wifi_ip[sizeof(esp_wifi_ip) - 1] = '\0';
+                    } else if (strncmp(cmd_buf, "# SSID:", 7) == 0) {
+                        const char* v = cmd_buf + 7;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ssid, v, sizeof(esp_wifi_ssid) - 1);
+                        esp_wifi_ssid[sizeof(esp_wifi_ssid) - 1] = '\0';
+                    } else if (strncmp(cmd_buf, "# STA:", 6) == 0) {
+                        const char* v = cmd_buf + 6;
+                        while (*v == ' ') v++;
+                        strncpy(esp_wifi_ssid, v, sizeof(esp_wifi_ssid) - 1);
+                        esp_wifi_ssid[sizeof(esp_wifi_ssid) - 1] = '\0';
+                        esp_wifi_is_ap = false;
+                    } else if (strncmp(cmd_buf, "# Mode:", 7) == 0) {
+                        const char* v = cmd_buf + 7;
+                        while (*v == ' ') v++;
+                        esp_wifi_is_ap = (strncmp(v, "AP", 2) == 0);
+                    } else if (strncmp(cmd_buf, "# Status: ready", 15) == 0) {
+                        esp_wifi_ready = true;
+                    }
                 }
                 cmd_len = 0;
             }
@@ -904,14 +956,13 @@ static void process_commands() {
 static void send_idle_telemetry() {
     car.poll_lidars();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_update();
+    mutex_exit(&i2c0_mutex);
 #endif
     int* s = car.read_sensors();
     Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
+    print_sensor_csv(s);
     Serial1.print(0);                     Serial1.print(',');
     Serial1.print(get_speed(), 2);        Serial1.print(',');
     Serial1.print(0.0, 1);
@@ -925,6 +976,53 @@ static void send_idle_telemetry() {
 
 #endif  // USE_WIFI_DEBUG
 
+// ─── Core 1 FIFO message handler (called from Core 0 loop) ─────────────────
+static void process_core1_message(uint32_t msg) {
+    switch (msg) {
+        case MSG_STOP_CAR:
+            car_running = false;
+            drv_enabled = false;
+            manual_mode = false;
+            car.write_speed(0);
+            car.write_steer(0);
+#if USE_WIFI_DEBUG
+            Serial1.println("$STS:STOP");
+#endif
+            break;
+        case MSG_START_CAR:
+            car.pid_integral   = 0;
+            car.pid_prev_error = 0;
+            car.pid_filtered   = 0;
+            car.pid_prev_ms    = 0;
+#if USE_IMU
+            car.reset_heading();
+#endif
+            car_running = true;
+#if USE_WIFI_DEBUG
+            Serial1.println("$STS:RUN");
+#endif
+            break;
+        case MSG_SAVE_EEPROM:
+            save_settings();
+            break;
+        case MSG_LOAD_EEPROM:
+            load_settings();
+            break;
+        case MSG_RESET_DEFAULTS:
+            cmd_rst_internal();
+            break;
+        default:
+            // Test requests: MSG_RUN_TEST_BASE + index (0–7)
+            if (msg >= MSG_RUN_TEST_BASE && msg < MSG_RUN_TEST_BASE + 8) {
+#if USE_WIFI_DEBUG
+                cmd_test_by_index((int)(msg - MSG_RUN_TEST_BASE));
+#endif
+                core1_test_active = false;  // signal Core 1 menu: test finished
+            }
+            break;
+    }
+}
+
 // ─── ESC calibration ─────────────────────────────────────────────────────────
 // Standard ESC calibration: max throttle → ESC learns high endpoint,
 // min throttle → ESC learns low endpoint, then neutral.
@@ -934,19 +1032,19 @@ void run_calibration() {
     Serial1.println("$T:CAL,phase=esc_max");
 #endif
     car.motor_esc.writeMicroseconds(2000);  // ESC max signal
-    delay(3000);                            // wait for ESC to register max (beeps)
+    delay(3000); rp2040.wdt_reset();       // wait for ESC to register max (beeps)
 
 #if USE_WIFI_DEBUG
     Serial1.println("$T:CAL,phase=esc_min");
 #endif
     car.motor_esc.writeMicroseconds(1000);  // ESC min signal
-    delay(3000);                            // wait for ESC to register min (beeps)
+    delay(3000); rp2040.wdt_reset();       // wait for ESC to register min (beeps)
 
 #if USE_WIFI_DEBUG
     Serial1.println("$T:CAL,phase=esc_neutral");
 #endif
     car.motor_esc.writeMicroseconds(NEUTRAL_SPEED);  // neutral (1500µs)
-    delay(1000);
+    delay(1000); rp2040.wdt_reset();
 
     // Mark as calibrated and persist
     cfg_calibrated = true;
@@ -961,55 +1059,71 @@ void run_calibration() {
 // ─── Stuck / reverse helpers ──────────────────────────────────────────────────
 void go_back() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}   // wait until stopped
+    { unsigned long _deadline = millis() + 2000;
+      while (get_speed() > 0.1f && millis() < _deadline) { rp2040.wdt_reset(); } }
     car.write_speed(-150);
-    delay(200);
+    delay(200); rp2040.wdt_reset();
     car.write_speed(0);
     delay(80);
     car.write_speed(-150);
-    delay(700);
+    delay(700); rp2040.wdt_reset();
     car.write_speed(0);
 }
 
 void go_back_long() {
     car.write_speed(0);
-    while (get_speed() > 0.1f) {}
+    { unsigned long _deadline = millis() + 2000;
+      while (get_speed() > 0.1f && millis() < _deadline) { rp2040.wdt_reset(); } }
     car.write_speed(-150);
-    delay(1000);
+    delay(1000); rp2040.wdt_reset();
     car.write_speed(0);
     delay(80);
     car.write_speed(-150);
-    delay(1800);
+    delay(1800); rp2040.wdt_reset();
     car.write_speed(0);
 }
 
 // ─── Main control logic ───────────────────────────────────────────────────────
 void work() {
-    // Bring LiDAR data up to date before reading
+    // Bring sensor data up to date before reading
     car.poll_lidars();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_update();
+    mutex_exit(&i2c0_mutex);
 #endif
     int* s = car.read_sensors();
 
     // ── Steering ──────────────────────────────────────────────────────────────
-    int diff;
-    bool f_l = s[1] < cfg_front_obstacle_dist;  // front-left blocked
-    bool f_r = s[2] < cfg_front_obstacle_dist;  // front-right blocked
+    // WALL_FOLLOW_BIAS: steering diff applied when both sides are open or all close,
+    // causes the car to hug the right wall (positive = steer right)
+    const int WALL_FOLLOW_BIAS = 800;
 
-    if (s[0] > cfg_side_open_dist && s[3] > cfg_side_open_dist) {
+    int diff;
+    bool f_l = s[IDX_FRONT_LEFT]  < cfg_front_obstacle_dist;  // front-left blocked
+    bool f_r = s[IDX_FRONT_RIGHT] < cfg_front_obstacle_dist;  // front-right blocked
+
+    if (s[IDX_LEFT] > cfg_side_open_dist && s[IDX_RIGHT] > cfg_side_open_dist) {
         // Both sides open — keep to right wall
-        diff = 800;
+        diff = WALL_FOLLOW_BIAS;
     } else {
         // Balance between walls
-        diff = s[3] - s[0];  // positive → steer right (away from right wall)
+        diff = s[IDX_RIGHT] - s[IDX_LEFT];  // positive → steer right (away from right wall)
     }
 
     // All sensors close: hard turn to escape
-    if (s[0] < cfg_all_close_dist && s[1] < cfg_all_close_dist &&
-        s[2] < cfg_all_close_dist && s[3] < cfg_all_close_dist) {
-        diff = 800;
+    bool all_close = true;
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        if (s[i] >= cfg_all_close_dist) { all_close = false; break; }
     }
+    if (all_close) {
+        diff = WALL_FOLLOW_BIAS;
+    }
+
+#if HAS_HARD_SIDES
+    // Blend hard-side sensors for wider corner awareness
+    diff += (int)((s[IDX_HARD_RIGHT] - s[IDX_HARD_LEFT]) * 0.25f);
+#endif
 
     // ── Speed ─────────────────────────────────────────────────────────────────
     int how_clear = (int)f_l + (int)f_r;  // 0 = path clear, 1-2 = blocked
@@ -1022,6 +1136,16 @@ void work() {
             coef = cfg_coe_blocked; spd = cfg_spd_blocked;  break;
     }
 
+#if USE_TRACK_LEARN
+    // Race mode: override speed with learned profile (anticipatory braking)
+    if (trk_mode == TRK_RACE) {
+        float rec = trk_recommend_speed(0.5f);  // look 50 cm ahead
+        if (rec > 0) spd = rec;
+    }
+    // Learn mode: record current steer/speed at distance intervals
+    trk_learn_tick((int)(diff * coef), spd);
+#endif
+
     car.write_steer((int)(diff * coef));
     car.write_speed_ms(spd);
     car.pid_control_motor();
@@ -1029,10 +1153,7 @@ void work() {
     // ── Telemetry ────────────────────────────────────────────────────────────
 #if USE_WIFI_DEBUG
     Serial1.print(millis());              Serial1.print(',');
-    Serial1.print(s[0]);                  Serial1.print(',');
-    Serial1.print(s[1]);                  Serial1.print(',');
-    Serial1.print(s[2]);                  Serial1.print(',');
-    Serial1.print(s[3]);                  Serial1.print(',');
+    print_sensor_csv(s);
     Serial1.print((int)(diff * coef));    Serial1.print(',');
     Serial1.print(get_speed(), 2);        Serial1.print(',');
     Serial1.print(spd, 1);
@@ -1045,8 +1166,8 @@ void work() {
 #endif
 
     // ── Stuck detection ───────────────────────────────────────────────────────
-    bool c_fl = s[1] < cfg_close_front_dist;
-    bool c_fr = s[2] < cfg_close_front_dist;
+    bool c_fl = s[IDX_FRONT_LEFT]  < cfg_close_front_dist;
+    bool c_fr = s[IDX_FRONT_RIGHT] < cfg_close_front_dist;
     bool low_speed = get_speed() < 0.1f;
 
     static int stuck_time = 0;
@@ -1105,7 +1226,9 @@ void work() {
         while ((millis() - strt) < 900) {
             car.poll_lidars();
 #if USE_IMU
+            mutex_enter_blocking(&i2c0_mutex);
             car.imu_update();
+            mutex_exit(&i2c0_mutex);
 #endif
             car.pid_control_motor();
         }
@@ -1121,37 +1244,59 @@ unsigned long next_loop = 0;
 
 void setup() {
     Serial.begin(115200);
+    Serial.print("Umbreon FW v"); Serial.println(FW_VERSION);
 
     // Try loading saved settings from EEPROM (falls back to compile-time defaults)
-    EEPROM.begin(256);
+    EEPROM.begin(4096);  // 256 for CarSettings + up to 3740 for track profile
     load_settings();
+#if USE_TRACK_LEARN
+    trk_load();  // try loading saved track (silent fail if none)
+#endif
 
     car.init();
 #if USE_IMU
+    mutex_enter_blocking(&i2c0_mutex);
     car.imu_init();
     car.imu_calibrate();  // sample gyro bias while stationary (~1s)
+    mutex_exit(&i2c0_mutex);
 #endif
+    // menu_init() moved to setup1() on Core 1
+
 #if USE_WIFI_DEBUG
     Serial1.setTX(DEBUG_TX_PIN);
     Serial1.setRX(DEBUG_RX_PIN);
     Serial1.begin(115200);
-    Serial1.println("#ms,s0,s1,s2,s3,steer,speed,target"
+    // Dynamic header based on sensor count
+    Serial1.print("#ms");
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        Serial1.print(",s");
+        Serial1.print(i);
+    }
+    Serial1.print(",steer,speed,target");
 #if USE_IMU
-                    ",yaw,heading"
+    Serial1.print(",yaw,heading");
 #endif
-                    );
+    Serial1.println();
+    // Query ESP WiFi status (ESP may have booted before us)
+    Serial1.println("#WIFISTATUS");
 #endif
 
     // Run ESC+servo calibration on first boot (or after $RST + reboot)
     if (!cfg_calibrated) {
         run_calibration();
     } else {
-        delay(3700);   // allow ESC to arm and LiDARs to start streaming
+        delay(3700);   // allow ESC to arm and sensors to start streaming
     }
+
+    // Enable hardware watchdog (8-second timeout) — resets MCU if firmware hangs
+    rp2040.wdt_begin(8000);
 }
 
 void loop() {
-    // Drain LiDAR bytes even between control ticks
+    rp2040.wdt_reset();  // feed hardware watchdog every loop iteration
+    // menu_tick() moved to loop1() on Core 1
+
+    // Drain sensor data even between control ticks
     car.poll_lidars();
     if (cfg_bat_enabled) car.bat_update();  // read battery ADC (self-throttles to every 500ms)
 
@@ -1159,6 +1304,12 @@ void loop() {
     // Process incoming dashboard commands
     process_commands();
 #endif
+
+    // Process FIFO messages from Core 1 (OLED menu actions)
+    uint32_t fifo_msg;
+    while (rp2040.fifo.pop_nb(&fifo_msg)) {
+        process_core1_message(fifo_msg);
+    }
 
     unsigned long now = millis();
     if (now >= next_loop) {
@@ -1175,7 +1326,9 @@ void loop() {
             // Manual drive mode — apply $DRV commands directly
             car.poll_lidars();
 #if USE_IMU
+            mutex_enter_blocking(&i2c0_mutex);
             car.imu_update();
+            mutex_exit(&i2c0_mutex);
 #endif
             int* s = car.read_sensors();
             car.write_steer(manual_steer);
@@ -1183,10 +1336,7 @@ void loop() {
             car.pid_control_motor();
 #if USE_WIFI_DEBUG
             Serial1.print(millis());              Serial1.print(',');
-            Serial1.print(s[0]);                  Serial1.print(',');
-            Serial1.print(s[1]);                  Serial1.print(',');
-            Serial1.print(s[2]);                  Serial1.print(',');
-            Serial1.print(s[3]);                  Serial1.print(',');
+            print_sensor_csv(s);
             Serial1.print(manual_steer);          Serial1.print(',');
             Serial1.print(get_speed(), 2);        Serial1.print(',');
             Serial1.print(manual_speed, 1);
@@ -1226,4 +1376,22 @@ void loop() {
             bat_low_since = 0;  // voltage OK — reset timer
         }
     }
+}
+
+// ─── Core 1: OLED menu ─────────────────────────────────────────────────────
+// Core 1 runs the OLED display and rotary encoder independently of the
+// control loop. Communication with Core 0 is via rp2040.fifo messages.
+// I2C0 bus (shared with IMU) is protected by i2c0_mutex.
+
+void setup1() {
+    // Wait for Core 0 to finish setup() (IMU cal ~1s, ESC cal/arm ~3.7s, WiFi init)
+    delay(6000);
+
+    mutex_enter_blocking(&i2c0_mutex);
+    menu_init();
+    mutex_exit(&i2c0_mutex);
+}
+
+void loop1() {
+    menu_tick_core1();
 }

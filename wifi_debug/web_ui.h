@@ -21,6 +21,7 @@ section{margin:8px;padding:12px;background:#1e293b;border-radius:8px;border:1px 
 h2{font-size:13px;color:#94a3b8;margin-bottom:8px;cursor:pointer;user-select:none}
 h2::before{content:'\25b8 '}h2.open::before{content:'\25be '}
 .g4{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.g6{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
 .sb{background:#0f172a;padding:8px;border-radius:6px;text-align:center}
 .sb .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 .sb .l{font-size:10px;color:#64748b;margin-top:2px}
@@ -67,11 +68,13 @@ button:active{background:#475569}
 </header>
 
 <section>
-<div class="g4">
+<div id="sG" class="g4">
 <div class="sb"><div class="v" id="s0">&mdash;</div><div class="l">Left (cm)</div></div>
 <div class="sb"><div class="v" id="s1">&mdash;</div><div class="l">Front-Left</div></div>
 <div class="sb"><div class="v" id="s2">&mdash;</div><div class="l">Front-Right</div></div>
 <div class="sb"><div class="v" id="s3">&mdash;</div><div class="l">Right</div></div>
+<div class="sb hid" id="s4w"><div class="v" id="s4">&mdash;</div><div class="l">Hard-Right</div></div>
+<div class="sb hid" id="s5w"><div class="v" id="s5">&mdash;</div><div class="l">Hard-Left</div></div>
 </div>
 <div class="ir">
 <span class="l">Speed</span><span class="v" id="sp">&mdash;</span>
@@ -100,6 +103,18 @@ button:active{background:#475569}
 </label>
 <span class="fs" id="mP">0, 0</span>
 </div>
+<div style="display:flex;gap:4px;margin-top:6px;align-items:center;flex-wrap:wrap">
+<span class="fs" style="font-weight:600">Track:</span>
+<button onclick="tL('LEARN')" style="padding:4px 8px;font-size:11px" class="bg0">Record</button>
+<button onclick="tL('STOP')" style="padding:4px 8px;font-size:11px" class="bn">Stop</button>
+<button onclick="tL('SAVE')" style="padding:4px 8px;font-size:11px">Save</button>
+<button onclick="tL('LOAD')" style="padding:4px 8px;font-size:11px">Load</button>
+<button onclick="tL('CLR')" style="padding:4px 8px;font-size:11px">Clear</button>
+<button onclick="tL('RACE')" style="padding:4px 8px;font-size:11px" class="bb">Race</button>
+<button onclick="tL('STATUS')" style="padding:4px 8px;font-size:11px">?</button>
+<button onclick="tL('GET')" style="padding:4px 8px;font-size:11px">Get</button>
+</div>
+<div class="fs" id="tS" style="margin-top:3px;font-variant-numeric:tabular-nums">IDLE | 0 pts</div>
 </div>
 </section>
 
@@ -232,6 +247,11 @@ button:active{background:#475569}
 
 <script>
 var ws,fc=0,di=null,lc='';
+var sn=4; // detected sensor count (4 or 6)
+// Sensor geometry configs: [angles_deg, lat_offsets, colors]
+var SN4={SD:[45,0,0,-45],SL:[.09,.04,-.04,-.09],SC:['#2ca02c','#1f77b4','#ff7f0e','#d62728'],LB:['Left','Front-Left','Front-Right','Right']};
+var SN6={SD:[-90,0,-45,45,0,90],SL:[-.12,-.04,-.09,.09,.04,.12],SC:['#e377c2','#ff7f0e','#d62728','#2ca02c','#1f77b4','#9467bd'],LB:['Hard-Right','Front-Right','Right','Left','Front-Left','Hard-Left']};
+function SC(){return sn>=6?SN6:SN4}
 function Q(id){return document.getElementById(id)}
 
 function cn(){
@@ -242,9 +262,34 @@ ws.onmessage=function(e){pr(e.data)};
 }
 function S(c){if(ws&&ws.readyState===1){ws.send(c);lc=c}}
 
+// --- Detect sensor count from header or field count ---
+function dSn(n){
+if(n===sn)return;
+sn=n;
+var sg=Q('sG'),i;
+// Rebuild sensor boxes
+sg.innerHTML='';
+sg.className=n>=6?'g6':'g4';
+var cfg=SC();
+for(i=0;i<n;i++){
+var d=document.createElement('div');d.className='sb';
+d.innerHTML='<div class="v" id="s'+i+'">&mdash;</div><div class="l">'+cfg.LB[i]+' (cm)</div>';
+sg.appendChild(d);
+}
+// Reset map wall arrays
+wl=[];for(i=0;i<n;i++)wl.push([]);
+tt('Detected '+n+' sensors','inf');
+}
+
 // --- Protocol ---
 function pr(l){
-l=l.trim();if(!l||l[0]==='#')return;
+l=l.trim();if(!l)return;
+// Header line — detect sensor count
+if(l[0]==='#'){
+var hc=l.split(',');var sc=0;for(var i=0;i<hc.length;i++){if(hc[i].match(/^s\d+$/))sc++}
+if(sc>0)dSn(sc);
+return;
+}
 if(l[0]==='$'){
 if(l==='$PONG')tt('PONG','ok');
 else if(l==='$ACK'){
@@ -264,22 +309,29 @@ else if(l.indexOf('$T:')===0)aL(l);
 else if(l.indexOf('$TR:')===0)aL(l);
 else if(l.indexOf('$TDONE:')===0){aL(l);tt('Test done','inf')}
 else if(l.indexOf('$BAT:')===0){var bv=parseFloat(l.slice(5));if(bv>0.5){Q('bV').classList.remove('hid');Q('bV').textContent=bv.toFixed(1)+'V';Q('bV').style.color=bv<6.2?'#ef4444':bv<7.0?'#f59e0b':'#22c55e'}}
+else if(l.indexOf('$TRK:')===0)tP(l.slice(5))
 }else{
 var p=l.split(',');
-if(p.length>=8){
+// Dynamic field count: ms + sn sensors + steer + speed + target [+ yaw + heading]
+var minF=sn+4; // ms + sensors + steer + speed + target
+if(p.length>=minF){
+// Auto-detect sensor count on first telemetry if not set by header
+if(fc===0&&sn===4){
+// 12 fields = 6 sensors + IMU, 10 fields could be 4+IMU or 6-noIMU
+if(p.length>=12)dSn(6);
+else if(p.length===10)dSn(4); // default to 4+IMU
+}
 fc++;
-var s0=parseInt(p[1]),s1=parseInt(p[2]),s2=parseInt(p[3]),s3=parseInt(p[4]);
 Q('F').textContent='#'+fc;
-Q('s0').textContent=(s0/10).toFixed(1);
-Q('s1').textContent=(s1/10).toFixed(1);
-Q('s2').textContent=(s2/10).toFixed(1);
-Q('s3').textContent=(s3/10).toFixed(1);
-Q('st').textContent=p[5];
-Q('sp').textContent=parseFloat(p[6]).toFixed(2)+' m/s';
-Q('tg').textContent=parseFloat(p[7]).toFixed(1)+' m/s';
-var hi=p.length>=10,yw=0;
-if(hi){yw=parseFloat(p[8]);Q('iR').classList.remove('hid');Q('yw').textContent=yw.toFixed(1)+'\u00b0/s';Q('hd').textContent=parseFloat(p[9]).toFixed(1)+'\u00b0'}
-if(mOn)mU(parseInt(p[0]),[s0,s1,s2,s3],parseInt(p[5]),parseFloat(p[6]),yw,hi);
+var sv=[];
+for(var i=0;i<sn;i++){sv[i]=parseInt(p[1+i]);var el=Q('s'+i);if(el)el.textContent=(sv[i]/10).toFixed(1)}
+var si=1+sn; // index after sensors
+Q('st').textContent=p[si];
+Q('sp').textContent=parseFloat(p[si+1]).toFixed(2)+' m/s';
+Q('tg').textContent=parseFloat(p[si+2]).toFixed(1)+' m/s';
+var hi=p.length>=sn+6,yw=0;
+if(hi){yw=parseFloat(p[si+3]);Q('iR').classList.remove('hid');Q('yw').textContent=yw.toFixed(1)+'\u00b0/s';Q('hd').textContent=parseFloat(p[si+4]).toFixed(1)+'\u00b0'}
+if(mOn)mU(parseInt(p[0]),sv,parseInt(p[si]),parseFloat(p[si+1]),yw,hi);
 }}}
 
 // --- Settings ---
@@ -287,10 +339,10 @@ var LB={FOD:'Front Obstacle',SOD:'Side Open',ACD:'All Close',CFD:'Close Front',
 KP:'PID Kp',KI:'PID Ki',KD:'PID Kd',MSP:'Min Spd \u00b5s',XSP:'Max Spd \u00b5s',BSP:'Min Rev \u00b5s',
 MNP:'Min Steer',XNP:'Max Steer',NTP:'Neutral',ENH:'Enc Holes',WDM:'Wheel Diam',
 LMS:'Loop ms',SPD1:'Spd Clear',SPD2:'Spd Block',COE1:'Coef Clear',COE2:'Coef Block',
-WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'Calibrated',BEN:'Bat Monitor',BML:'Bat Mult',BLV:'Bat Low V',IMU:'IMU',DBG:'Debug'};
+WDD:'Wrong Dir',RCW:'Race CW',STK:'Stuck Thr',IMR:'IMU Rot',SVR:'Srv Rev',CAL:'Calibrated',BEN:'Bat Monitor',BML:'Bat Mult',BLV:'Bat Low V',IMU:'IMU',DBG:'Debug',SNS:'Sensors',SMX:'Max Range'};
 var FL={KP:1,KI:1,KD:1,WDM:1,SPD1:1,SPD2:1,COE1:1,COE2:1,WDD:1,BML:1,BLV:1};
 var BL={RCW:1,IMR:1,SVR:1,CAL:1,BEN:1,IMU:1,DBG:1};
-var RO={IMU:1,DBG:1},OR={};
+var RO={IMU:1,DBG:1,SNS:1,SMX:1},OR={};
 var GR=[
 ['\u26a0 Obstacles','FOD','SOD','ACD','CFD'],
 ['\u23f1 Speed','SPD1','SPD2','MSP','XSP','BSP'],
@@ -299,13 +351,16 @@ var GR=[
 ['\u23f2 Loop','LMS','STK','WDD'],
 ['\u2638 Encoder','ENH','WDM'],
 ['\u2611 Flags','RCW','IMR','SVR','CAL','IMU','DBG'],
-['\u26a1 Battery','BEN','BML','BLV']
+['\u26a1 Battery','BEN','BML','BLV'],
+['\u2b50 Sensor','SNS','SMX']
 ];
 
 function pC(cfg){
 var el=Q('P');el.innerHTML='';OR={};
 var vals={},ps=cfg.split(','),i,kv;
 for(i=0;i<ps.length;i++){kv=ps[i].split('=');if(kv.length>=2){vals[kv[0]]=kv[1];OR[kv[0]]=kv[1]}}
+// Detect sensor count from SNS config value
+if(vals['SNS']){var ns=parseInt(vals['SNS']);if(ns>0)dSn(ns)}
 for(var g=0;g<GR.length;g++){
 var grp=GR[g],name=grp[0];
 var hdr=document.createElement('div');
@@ -401,21 +456,19 @@ function eX(){S('$ESC:1500');Q('eS').value=1500;Q('eV').textContent='1500'}
 // --- Track Map ---
 var mx=0,my=0,mh=0,mp=0,ms=150,mo=0,mn=0;
 var tr=[],wl=[[],[],[],[]],md=false;
-var mOn=true,mLi=false; // mOn=map active (section open), mLi=light mode
-var TRL=600,WLL=400; // trail/wall limits (normal)
-var SD=[45,0,0,-45],SL=[.09,.04,-.04,-.09],SF=.253,WB=.173,MX=28*Math.PI/180;
-var SC=['#2ca02c','#1f77b4','#ff7f0e','#d62728'];
+var mOn=true,mLi=false;
+var TRL=600,WLL=400;
+var SF=.253,WB=.173,MX=28*Math.PI/180;
 
 function mLt(on){
 mLi=on;
 if(on){TRL=150;WLL=100;
-// trim existing data
 while(tr.length>TRL)tr.shift();
-for(var i=0;i<4;i++)while(wl[i].length>WLL)wl[i].shift();
+for(var i=0;i<sn;i++)while(wl[i]&&wl[i].length>WLL)wl[i].shift();
 }else{TRL=600;WLL=400}
 }
 
-function mU(t,s,st,sp,yw,hi){
+function mU(t,sv,st,sp,yw,hi){
 if(mp===0){mp=t;return}
 var dt=(t-mp)/1000;mp=t;
 if(dt<=0||dt>1)return;
@@ -424,11 +477,12 @@ else{var sa=st/1000*MX;if(Math.abs(sa)>.001)mh+=sp*dt/(WB/Math.tan(sa))}
 mx+=sp*dt*Math.cos(mh);my+=sp*dt*Math.sin(mh);
 tr.push([mx,my]);if(tr.length>TRL)tr.shift();
 if(!mLi){
-var ch=Math.cos(mh),sh=Math.sin(mh),i,dm,sx,sy,ra;
-for(i=0;i<4;i++){
-dm=s[i]/10000;if(dm<=0||dm>=8)continue;
-sx=mx+SF*ch-SL[i]*sh;sy=my+SF*sh+SL[i]*ch;
-ra=mh+SD[i]*Math.PI/180;
+var cfg=SC(),ch=Math.cos(mh),sh=Math.sin(mh),i,dm,sx,sy,ra;
+for(i=0;i<sn;i++){
+dm=sv[i]/10000;if(dm<=0||dm>=8)continue;
+sx=mx+SF*ch-cfg.SL[i]*sh;sy=my+SF*sh+cfg.SL[i]*ch;
+ra=mh+cfg.SD[i]*Math.PI/180;
+if(!wl[i])wl[i]=[];
 wl[i].push([sx+dm*Math.cos(ra),sy+dm*Math.sin(ra)]);
 if(wl[i].length>WLL)wl[i].shift();
 }}
@@ -440,10 +494,10 @@ var c=Q('mC');if(!c||!mOn)return;
 var w=c.clientWidth,h=c.clientHeight;if(w<2)return;
 c.width=w;c.height=h;
 var ctx=c.getContext('2d'),ox=mo,oy=mn,i,j,p,p0,pl;
+var cfg=SC();
 ctx.fillStyle='#020617';ctx.fillRect(0,0,w,h);
 if(Q('mF').checked&&tr.length>0){ox=-(mx*ms);oy=my*ms}
 function tx(a,b){return[w/2+a*ms+ox,h/2-b*ms+oy]}
-// grid (skip in light mode)
 if(!mLi){
 ctx.strokeStyle='#1e293b';ctx.lineWidth=1;
 var gs=ms<50?1:ms<150?.5:.2;
@@ -451,11 +505,9 @@ var x0=(-w/2-ox)/ms,x1=(w/2-ox)/ms,y0=(-h/2+oy)/ms,y1=(h/2+oy)/ms;
 for(var gx=Math.floor(x0/gs)*gs;gx<=x1;gx+=gs){p=tx(gx,0);ctx.beginPath();ctx.moveTo(p[0],0);ctx.lineTo(p[0],h);ctx.stroke()}
 for(var gy=Math.floor(y0/gs)*gs;gy<=y1;gy+=gs){p=tx(0,gy);ctx.beginPath();ctx.moveTo(0,p[1]);ctx.lineTo(w,p[1]);ctx.stroke()}
 }
-// walls (skip in light mode)
 if(!mLi){
-for(i=0;i<4;i++){ctx.fillStyle=SC[i];for(j=0;j<wl[i].length;j++){p=tx(wl[i][j][0],wl[i][j][1]);ctx.fillRect(p[0]-1.5,p[1]-1.5,3,3)}}
+for(i=0;i<sn;i++){if(!wl[i])continue;ctx.fillStyle=cfg.SC[i];for(j=0;j<wl[i].length;j++){p=tx(wl[i][j][0],wl[i][j][1]);ctx.fillRect(p[0]-1.5,p[1]-1.5,3,3)}}
 }
-// trail
 if(tr.length>1){
 ctx.strokeStyle='#eab308';ctx.lineWidth=1.5;ctx.beginPath();
 p0=tx(tr[0][0],tr[0][1]);ctx.moveTo(p0[0],p0[1]);
@@ -463,27 +515,27 @@ var step=Math.max(1,Math.floor(tr.length/300));
 for(j=step;j<tr.length;j+=step){p=tx(tr[j][0],tr[j][1]);ctx.lineTo(p[0],p[1])}
 pl=tx(tr[tr.length-1][0],tr[tr.length-1][1]);ctx.lineTo(pl[0],pl[1]);ctx.stroke();
 }
-// car marker
 if(tr.length>0){
 var cp=tx(mx,my);
 ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cp[0],cp[1],5,0,6.283);ctx.fill();
 ctx.strokeStyle='#eab308';ctx.lineWidth=2;ctx.beginPath();
 ctx.moveTo(cp[0],cp[1]);ctx.lineTo(cp[0]+14*Math.cos(-mh),cp[1]+14*Math.sin(-mh));ctx.stroke();
-// sensor rays (skip in light mode)
 if(!mLi){
 var ch2=Math.cos(mh),sh2=Math.sin(mh);
-for(i=0;i<4;i++){
-var sx2=mx+SF*ch2-SL[i]*sh2,sy2=my+SF*sh2+SL[i]*ch2;
-var ra2=mh+SD[i]*Math.PI/180;
+for(i=0;i<sn;i++){
+var sx2=mx+SF*ch2-cfg.SL[i]*sh2,sy2=my+SF*sh2+cfg.SL[i]*ch2;
+var ra2=mh+cfg.SD[i]*Math.PI/180;
 var sp2=tx(sx2,sy2),ep=tx(sx2+.5*Math.cos(ra2),sy2+.5*Math.sin(ra2));
-ctx.strokeStyle=SC[i];ctx.lineWidth=1;ctx.globalAlpha=.4;
+ctx.strokeStyle=cfg.SC[i];ctx.lineWidth=1;ctx.globalAlpha=.4;
 ctx.beginPath();ctx.moveTo(sp2[0],sp2[1]);ctx.lineTo(ep[0],ep[1]);ctx.stroke();
 ctx.globalAlpha=1;
 }}}
 Q('mP').textContent=mx.toFixed(2)+', '+my.toFixed(2);
 }
 
-function mR(){mx=0;my=0;mh=0;mp=0;mo=0;mn=0;tr=[];wl=[[],[],[],[]];mD()}
+function mR(){mx=0;my=0;mh=0;mp=0;mo=0;mn=0;tr=[];wl=[];for(var i=0;i<sn;i++)wl.push([]);mD()}
+function tL(c){S('$TRK:'+c)}
+function tP(d){if(d.indexOf('STS,')===0){var m={};d.slice(4).split(',').forEach(function(kv){var p=kv.split('=');if(p.length===2)m[p[0]]=p[1]});var dm=(parseInt(m.dist||0)/100).toFixed(1);var t=(m.mode||'?')+' | '+(m.pts||0)+'/'+(m.max||0)+' pts | '+dm+'m';if(m.odo)t+=' | odo:'+(parseInt(m.odo)/100).toFixed(1)+'m';Q('tS').textContent=t;Q('tS').style.color=m.mode==='LEARN'?'#a3e635':m.mode==='RACE'?'#60a5fa':'#64748b'}else{aL('$TRK:'+d);if(d==='DONE')tt('Track data','inf')}}
 function mZ(f){ms*=f;ms=Math.max(10,Math.min(3000,ms));mD()}
 
 (function(){

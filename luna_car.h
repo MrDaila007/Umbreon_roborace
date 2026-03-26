@@ -1,7 +1,15 @@
 #pragma once
 
 #include <Servo.h>
+#include "sensor_config.h"
+
+// ─── Sensor-specific includes ────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
 #include <SerialPIO.h>
+#elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
+#include <Wire.h>
+#include <Adafruit_VL53L0X.h>
+#endif
 
 #if USE_IMU
 #include <Wire.h>
@@ -13,6 +21,7 @@
 #endif
 
 // ─── Pin assignments (RP2350 / Pico 2) ───────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
 // LiDAR RX-only UART (TX=NOPIN):
 //   s[0] = Left       → GP2
 //   s[1] = Front-Left → GP3
@@ -20,6 +29,7 @@
 //   s[3] = Right      → GP5
 static const uint8_t  LIDAR_RX_PINS[4] = {2, 3, 4, 5};
 static const uint32_t LIDAR_BAUD       = 115200;
+#endif
 
 #define SERVO_PIN   10   // Steering servo (PWM)
 #define MOTOR_PIN   11   // Motor ESC (PWM)
@@ -61,7 +71,7 @@ volatile unsigned long _taho_iv    = 0;
 void taho_interrupt() {
     unsigned long now   = micros();
     unsigned long delta = now - _taho_last;
-    if (delta < 500UL) return;   // debounce 500µs
+    if (delta < 200UL) return;   // debounce 200µs (supports up to ~5 m/s with 62-hole encoder)
     _taho_count++;
     _taho_iv   = delta;
     _taho_last = now;
@@ -71,12 +81,14 @@ void taho_interrupt() {
 float get_speed() {
     unsigned long elapsed = (unsigned long)(micros() - _taho_last);
     elapsed = max(elapsed, _taho_iv);
-    if (_taho_iv == 0 || elapsed > 500000UL) return 0.0f;
+    if (_taho_iv == 0 || elapsed > 500000UL || cfg_encoder_holes <= 0) return 0.0f;
     return (3.14159265f * cfg_wheel_diam_m) /
            ((float)cfg_encoder_holes * ((float)elapsed / 1e6f));
 }
 
-// ─── TF-Luna packet state ─────────────────────────────────────────────────────
+// ─── TF-Luna sensor support ─────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
+
 struct LidarState {
     uint8_t  buf[9];
     uint8_t  idx;
@@ -90,6 +102,18 @@ SerialPIO _lidar_serial0(NOPIN, LIDAR_RX_PINS[0]);
 SerialPIO _lidar_serial1(NOPIN, LIDAR_RX_PINS[1]);
 SerialPIO _lidar_serial2(NOPIN, LIDAR_RX_PINS[2]);
 SerialPIO _lidar_serial3(NOPIN, LIDAR_RX_PINS[3]);
+
+#endif  // SENSOR_4X_LUNA
+
+// ─── VL53L0X sensor support ─────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_6X_VL53L0X
+
+static Adafruit_VL53L0X _vl53_sensors[SENSOR_COUNT];
+static const uint8_t    _vl53_xshut[] = VL53_XSHUT_PINS;
+static uint16_t         _vl53_range_mm[SENSOR_COUNT];  // latest reading in mm
+static bool             _vl53_valid[SENSOR_COUNT];
+
+#endif  // SENSOR_6X_VL53L0X
 
 // ─── Car class ────────────────────────────────────────────────────────────────
 class Car {
@@ -115,7 +139,7 @@ public:
     float         bat_voltage  = 0.0f;   // filtered battery voltage (V)
     unsigned long bat_prev_ms  = 0;
 
-    const int sensor_amount = 4;
+    static const int sensor_amount = SENSOR_COUNT;
 
     void init();
     void bat_update();  // read ADC, apply divider + EMA (call every loop tick, self-throttles)
@@ -127,11 +151,12 @@ public:
     void write_steer(int s);          // -1000 (left) … +1000 (right)
 
     // Sensor access
-    // Returns pointer to static array [4] of distances in cm×10
-    // (same units as original IR-sensor code so thresholds stay identical)
+    // Returns pointer to static array [SENSOR_COUNT] of distances in cm×10
     int* read_sensors();
 
-    // Feed incoming LiDAR bytes — call every loop iteration
+    // Feed incoming sensor data — call every loop iteration
+    // For TF-Luna: processes incoming UART bytes
+    // For VL53L0X: no-op (I2C reads happen in read_sensors)
     void poll_lidars();
 
 #if USE_IMU
@@ -142,10 +167,11 @@ public:
 #endif
 
 private:
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
     SerialPIO* _serials[4];
     LidarState _lidars[4];
-
     void _process_byte(int id, uint8_t b);
+#endif
 };
 
 // ─── Car::init ────────────────────────────────────────────────────────────────
@@ -162,6 +188,7 @@ void Car::init() {
     analogReadResolution(12);  // 12-bit (0–4095)
     pinMode(BAT_PIN, INPUT);
 
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
     _serials[0] = &_lidar_serial0;
     _serials[1] = &_lidar_serial1;
     _serials[2] = &_lidar_serial2;
@@ -171,9 +198,74 @@ void Car::init() {
         _serials[i]->begin(LIDAR_BAUD);
         _lidars[i] = {};
     }
+
+#elif SENSOR_CONFIG == SENSOR_6X_VL53L0X
+    // Hold all XSHUT pins LOW to reset all sensors
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        pinMode(_vl53_xshut[i], OUTPUT);
+        digitalWrite(_vl53_xshut[i], LOW);
+        _vl53_valid[i] = false;
+        _vl53_range_mm[i] = 0;
+    }
+    delay(10);
+
+    // I2C1 bus recovery: toggle SCL to free stuck SDA
+    pinMode(VL53_SDA, INPUT_PULLUP);
+    pinMode(VL53_SCL, OUTPUT);
+    for (int j = 0; j < 16; j++) {
+        digitalWrite(VL53_SCL, LOW);
+        delayMicroseconds(5);
+        digitalWrite(VL53_SCL, HIGH);
+        delayMicroseconds(5);
+    }
+    // STOP condition: SDA LOW→HIGH while SCL HIGH
+    pinMode(VL53_SDA, OUTPUT);
+    digitalWrite(VL53_SDA, LOW);
+    delayMicroseconds(5);
+    digitalWrite(VL53_SCL, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(VL53_SDA, HIGH);
+    delayMicroseconds(5);
+
+    // Check bus lines are free
+    pinMode(VL53_SDA, INPUT_PULLUP);
+    pinMode(VL53_SCL, INPUT_PULLUP);
+    delay(1);
+    bool i2c1_ok = digitalRead(VL53_SDA) && digitalRead(VL53_SCL);
+
+    if (!i2c1_ok) {
+        Serial.println("VL53: I2C1 bus stuck, sensors disabled");
+        for (int i = 0; i < SENSOR_COUNT; i++) _vl53_valid[i] = false;
+    }
+
+    // Initialize Wire1 for VL53L0X sensors
+    int vl53_ok = 0;
+    if (i2c1_ok) {
+        Wire1.setSDA(VL53_SDA);
+        Wire1.setSCL(VL53_SCL);
+        Wire1.begin();
+        Wire1.setClock(100000);
+        Wire1.setTimeout(50);
+
+        // Enable sensors one by one and assign unique I2C addresses
+        for (int i = 0; i < SENSOR_COUNT; i++) {
+            digitalWrite(_vl53_xshut[i], HIGH);
+            delay(50);
+
+            if (_vl53_sensors[i].begin(VL53_BASE_ADDR + i, false, &Wire1)) {
+                _vl53_sensors[i].startRangeContinuous(33);
+                _vl53_valid[i] = true;
+                vl53_ok++;
+            }
+        }
+    }
+    Serial.print("VL53: "); Serial.print(vl53_ok);
+    Serial.print("/"); Serial.print(SENSOR_COUNT); Serial.println(" online");
+#endif
 }
 
 // ─── TF-Luna packet parser ────────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_4X_LUNA
 // Frame: 0x59 0x59 DistL DistH StrL StrH RawTemp RawTempH Checksum
 void Car::_process_byte(int id, uint8_t b) {
     LidarState& st = _lidars[id];
@@ -210,12 +302,49 @@ void Car::poll_lidars() {
 // Returns distances as cm×10 so existing roborace thresholds work unchanged.
 // If a sensor has no valid reading yet, returns 9999 (very far / unknown).
 int* Car::read_sensors() {
-    static int values[4];
-    for (int i = 0; i < 4; i++) {
+    static int values[SENSOR_COUNT];
+    for (int i = 0; i < SENSOR_COUNT; i++) {
         values[i] = _lidars[i].hasReading ? (int)_lidars[i].dist_cm * 10 : 9999;
     }
+    // Update snapshot for Core 1 (OLED dashboard reads this)
+    extern volatile int sensor_snapshot[];
+    for (int i = 0; i < SENSOR_COUNT; i++) sensor_snapshot[i] = values[i];
     return values;
 }
+#endif  // SENSOR_4X_LUNA
+
+// ─── VL53L0X sensor reading ─────────────────────────────────────────────────
+#if SENSOR_CONFIG == SENSOR_6X_VL53L0X
+
+void Car::poll_lidars() {
+    // No-op for VL53L0X — I2C reads happen in read_sensors()
+}
+
+int* Car::read_sensors() {
+    static int values[SENSOR_COUNT];
+    for (int i = 0; i < SENSOR_COUNT; i++) {
+        if (_vl53_valid[i] && _vl53_sensors[i].isRangeComplete()) {
+            uint16_t mm = _vl53_sensors[i].readRangeResult();
+            // VL53L0X returns 8190 on out-of-range / error
+            if (mm < 8190) {
+                _vl53_range_mm[i] = mm;
+            }
+        }
+        // Convert mm → cm×10, cap at MAX_SENSOR_RANGE
+        // mm and cm×10 are numerically identical: 1 mm = 0.1 cm, cm×10 = cm*10, so mm/10*10 = mm
+        if (_vl53_valid[i] && _vl53_range_mm[i] > 0 && _vl53_range_mm[i] < 8190) {
+            int cm10 = (int)_vl53_range_mm[i];  // mm == cm×10 (identity conversion)
+            values[i] = min(cm10, MAX_SENSOR_RANGE);
+        } else {
+            values[i] = 9999;
+        }
+    }
+    // Update snapshot for Core 1 (OLED dashboard reads this)
+    extern volatile int sensor_snapshot[];
+    for (int i = 0; i < SENSOR_COUNT; i++) sensor_snapshot[i] = values[i];
+    return values;
+}
+#endif  // SENSOR_6X_VL53L0X
 
 // ─── Motor control (count-based PID with feedforward) ────────────────────────
 void Car::pid_control_motor() {
@@ -235,8 +364,10 @@ void Car::pid_control_motor() {
     unsigned long delta_cnt = cnt - pid_prev_cnt;
     pid_prev_cnt = cnt;
 
-    float raw_speed = (delta_cnt / (float)cfg_encoder_holes) *
-                      (3.14159265f * cfg_wheel_diam_m) / dt;
+    float raw_speed = (cfg_encoder_holes > 0)
+        ? (delta_cnt / (float)cfg_encoder_holes) *
+          (3.14159265f * cfg_wheel_diam_m) / dt
+        : 0.0f;
 
     // EMA filter (0.7 = responsive, 0.3 = smooth)
     pid_filtered = 0.7f * raw_speed + 0.3f * pid_filtered;
@@ -334,6 +465,7 @@ bool Car::imu_init() {
 // Takes ~1 second (200 samples at 5ms intervals). Call after imu_init(), before driving.
 void Car::imu_calibrate() {
     if (!imu_ok) return;
+    Serial.println("IMU: calibrating gyro bias (~1s, keep still)...");
 
     const int SAMPLES = 200;
     float sum = 0.0f;
@@ -354,6 +486,11 @@ void Car::imu_calibrate() {
 
     if (count > 0)
         gyro_bias = sum / count;
+    Serial.print("IMU: bias = ");
+    Serial.print(gyro_bias, 3);
+    Serial.print(" deg/s (");
+    Serial.print(count);
+    Serial.println(" samples)");
 }
 
 #define IMU_EMA_ALPHA  0.3f    // EMA smoothing (0.0=max smooth, 1.0=no filter)

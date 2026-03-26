@@ -1,7 +1,7 @@
 
 # Umbreon -- Roborace Car Firmware
 
-Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x TF-Luna LiDAR** sensors, with a **live web dashboard** for telemetry, track mapping, and remote tuning.
+Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** supporting **4x TF-Luna LiDAR** or **6x VL53L0X ToF** sensors, with a **live web dashboard**, **on-car OLED menu**, and **WiFi bridge** for telemetry, track mapping, and remote tuning.
 
 <p align="center">
   <img src="docs/Logo.png" alt="Umbreon Team Logo" width="400">
@@ -15,7 +15,7 @@ Autonomous roborace car firmware for **Raspberry Pi Pico 2 (RP2350)** using **4x
 | Component | Model | Notes |
 |---|---|---|
 | Microcontroller | RP2350 (Pico 2) | Arduino-Pico framework |
-| Distance sensors | 4x Benewake TF-Luna | UART, 115200 baud |
+| Distance sensors | 4x TF-Luna or 6x VL53L0X | UART / I2C (compile-time `SENSOR_CONFIG`) |
 | IMU | MPU-6050 | I2C, gyro Z only (optional) |
 | WiFi bridge | Wemos D1 Mini (ESP8266) | 3-port server: HTTP, WebSocket, TCP |
 | Steering | Servo motor | PWM |
@@ -50,9 +50,12 @@ Umbreon_roborace/
 |-- wifi_debug/
 |   |-- wifi_debug.ino        Wemos D1 Mini WiFi bridge firmware (ESP8266)
 |   +-- web_ui.h              Built-in web dashboard (PROGMEM HTML/JS)
-|-- hardware_test_wifi/
-|   |-- hardware_test_wifi.ino  Standalone hardware test with WiFi + IMU
-|   +-- i2c_scanner/            I2C bus scanner for Umbreon pin config
+|-- i2c_scanner/
+|   +-- i2c_scanner.ino         I2C bus scanner for Umbreon pin config
+|-- oled_test/
+|   +-- oled_test.ino           OLED + rotary encoder standalone test
+|-- sensor_test/
+|   +-- sensor_test.ino         VL53L0X 6-sensor + OLED standalone test
 |-- dashboard/
 |   |-- server.py             Web dashboard server (aiohttp)
 |   |-- static/index.html     Web UI -- charts, track map, settings
@@ -128,7 +131,7 @@ Open **http://localhost:8080**, enter host `localhost`, port `8023`, click Conne
 
 Open **http://192.168.4.1** from any device on the Umbreon WiFi — no server needed:
 
-- **Live telemetry** -- 4 LiDAR distances, speed, steer, IMU heading
+- **Live telemetry** -- 4 or 6 sensor distances (auto-detected), speed, steer, IMU heading
 - **Track map** -- dead-reckoning trajectory with LiDAR wall points, pan/zoom
 - **Manual drive** -- steer/speed sliders with enable checkbox (no $START required)
 - **Remote settings** -- read/write all 31 parameters in grouped categories, save/load EEPROM
@@ -158,7 +161,7 @@ loop (every 40 ms)
 |-- process_commands()     handle dashboard commands via WiFi
 |
 +-- work()
-    |-- read_sensors()     get distances [Left, FL, FR, Right] in cm*10
+    |-- read_sensors()     get distances [SENSOR_COUNT] in cm*10
     |-- imu_update()       read gyro Z, bias-subtract, EMA filter, dead zone, integrate heading
     |-- steering logic     wall-balancing + obstacle avoidance
     |-- speed + PID        target m/s tracked with PID controller
@@ -279,3 +282,7 @@ On Windows, use `make.bat` (same targets).
 
 - `numpy`, `matplotlib`, `aiohttp`
 - Install: `pip install -r dashboard/requirements.txt`
+
+## CI
+
+Self-hosted GitHub Actions — [`docs/self-hosted-ci.md`](docs/self-hosted-ci.md) (**пошаговый сетап нового runner’а** под этот репозиторий — в том же файле). Workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml). Облачный вариант (бекап): [`docs/ci-backup/ci.cloud.yml`](docs/ci-backup/ci.cloud.yml). После job **firmware-build** в **Actions** публикуется артефакт **`firmware-pico2`** (сборка Pico 2: `.uf2` и др. в `build/`).
